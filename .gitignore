@@ -1,0 +1,9 @@
+# Python
+venv
+*.lprof
+
+# Pycharm
+.idea
+
+# Vim
+*.swp
