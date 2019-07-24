@@ -299,7 +299,7 @@ class CTBN:
         elif kind == 'line':
             fig, axs = plt.subplots(self.n_nodes)
             for n, ax in enumerate(axs):
-                ax.step(self._switching_times, self._states[:, n])
+                ax.step(self._switching_times, self._states[:, n], where='post')
         else:
             raise ValueError('unknown kind')
 
