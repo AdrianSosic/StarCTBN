@@ -13,7 +13,6 @@ class CTBN:
     S: number of states (equal for all nodes)
     T: simulation horizon
     """
-    # TODO: cache CRMs
 
     def __init__(self, adjacency, n_states, T, crm_fun, init_state=None):
         """
@@ -49,6 +48,10 @@ class CTBN:
         # attributes to store sampled trajectory
         self._states = None
         self._switching_times = None
+
+        # CRM caching
+        self._crms = None
+        self._crms_cached = False
 
     @property
     def adjacency(self):
@@ -134,7 +137,7 @@ class CTBN:
         out : 3-D array, shape: (N, S, S)
             N conditional rate matrices, represented as a three-dimensional array.
         """
-        return np.array([self.crm_fun(i, state[self.parents(i)]) for i in range(self.n_nodes)])
+        return np.array([self.crm(i, state[self.parents(i)]) for i in range(self.n_nodes)])
 
     def get_rates(self, state, crms=None):
         """
@@ -156,6 +159,64 @@ class CTBN:
         if crms is None:
             crms = self.get_crms(state)
         return np.squeeze(np.take_along_axis(crms, state[:, None, None], axis=1))
+
+    def crm(self, node, parent_state):
+        """
+        Returns the conditional rate matrix of a node for a given parent configuration either from cache or by
+        calling the CRM function.
+
+        Parameters
+        ----------
+        node : int
+            (see crm_fun)
+
+        parent_state : 1-D array
+            (see crm_fun)
+
+        Returns
+        -------
+        out : 2-D array, shape: (S, S)
+            Conditional rate matrix.
+        """
+        if self._crms_cached:
+            parent_state = tuple(parent_state) if len(parent_state) > 0 else slice(None)
+            return self._crms[node][parent_state]
+        else:
+            return self.crm_fun(node, parent_state)
+
+    def cache_crms(self):
+        """
+        Caches the conditional rate matrices of all nodes to avoid repeated calls of the CRM function using a
+        generic caching strategy, where all possible CRMs of all nodes are evaluated and stored one after another.
+
+        Side Effects
+        ------------
+        self._crms <-- list of numpy arrays containing the conditional rate matrices of all nodes
+        """
+        # create empty list to store all CRMs
+        self._crms = []
+
+        # iterate over all nodes
+        for n in range(self.n_nodes):
+            # get the parents of the node
+            parents = self.parents(n)
+
+            # if the node has no parents, simply store the node's single (unconditional) rate matrix and continue
+            if not parents:
+                self._crms.append(self.crm_fun(n, []))
+                continue
+
+            # create empty array of appropriate shape to store all conditional rate matrices of the node
+            shape = (len(parents) + 2) * [self.n_states]
+            self._crms.append(np.zeros(shape))
+
+            # iterate over all parent state configurations
+            for parent_state in np.ndindex(*shape[0:-2]):
+                # store the CRM of the current parent configuration using the configuration index
+                self._crms[n][parent_state] = self.crm_fun(n, parent_state)
+
+        # indicate that CRMs have been cached
+        self._crms_cached = True
 
     def simulate(self):
         """
@@ -260,6 +321,32 @@ class Glauber_CTBN(CTBN):
         self.tau = tau
         crm_fun = lambda i, pa: self.glauber_crm(np.sum(pa), beta, tau)
         CTBN.__init__(self, n_states=2, crm_fun=crm_fun, **kwargs)
+
+    def cache_crms(self):
+        """
+        Overwrites method in CTBN:
+        Caches the conditional rate matrices by storing only one matrix per energy level.
+        """
+        # number of distinct CRMs = number of energy levels = maximum number of parents in the network + 1
+        n_crms = self.adjacency.sum(axis=1) + 1
+
+        # initialize empty array and store the different CRMs
+        self._crms = np.zeros([n_crms, 2, 2])
+        for s in range(n_crms):
+            self._crms[s] = self.glauber_crm(s, self.beta, self.tau)
+
+        # indicate that CRMs have been cached
+        self._crms_cached = True
+
+    def crm(self, node, parent_state):
+        """
+        Overwrites method in CTBN:
+        Queries the conditional rate matrices of a node based on the energy level of its parents.
+        """
+        if self._crms_cached:
+            return self._crms[np.sum(parent_state)]
+        else:
+            return self.crm_fun(node, parent_state)
 
     @staticmethod
     def glauber_crm(n_up_spins, beta, tau):
