@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.stats as sta
 import networkx as nx
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
@@ -14,7 +15,7 @@ class CTBN:
     T: simulation horizon
     """
 
-    def __init__(self, adjacency, n_states, T, crm_fun, init_state=None):
+    def __init__(self, adjacency, n_states, T, crm_fun, obs_model=None, init_state=None):
         """
         Parameters
         ----------
@@ -33,6 +34,18 @@ class CTBN:
             integer in [0, N] and "pa" is a 1-D array containing the parent states ordered from lowest to highest
             parent node number. Each entry in "pa" is an integer in [0, S].
 
+        obs_model : dict with fields {'rvs', likelihood'}
+            'rvs' : callable, one parameter
+                Generates a random observation of a CTBN state. When called with parameter X, where X is a 1-D array
+                of shape (N,) containing integer values in [0, S] representing a CTBN state, it returns a
+                corresponding (N,)-array containing noisy observations of each node's state.
+            'likelihood' : callable, two parameters
+                Computes the likelihood of a given observation. When called with parameters (Y, X), it returns a 2-D
+                array containing the likelihood of the CTBN state observation "Y" for given CTBN states "X". "Y" is a
+                1-D array of shape (N,) containing noisy observations, as generated through the field 'rvs'. "X" is a
+                2-D array of shape (M, N) containing M different CTBN states. The (m,n)th element of the returned array
+                contains the likelihood that the nth CTBN node generated observation Y[n] at state X[m,n].
+
         init_state : optional, {None, 1-D array}
             Initial state of the CTBN.
             * None: all initial node states are drawn uniformly at random
@@ -43,6 +56,7 @@ class CTBN:
         self.n_states = n_states
         self.T = T
         self.crm_fun = crm_fun
+        self.obs_model = obs_model
         self.init_state = init_state
 
         # attributes to store sampled trajectory
@@ -52,6 +66,10 @@ class CTBN:
         # CRM caching
         self._crms = None
         self._crms_cached = False
+
+        # observations
+        self.obs_times = None
+        self.obs_vals = None
 
     @property
     def adjacency(self):
@@ -273,9 +291,41 @@ class CTBN:
         self._states = states
         self._switching_times = switching_times
 
+    def emit(self, n_or_times):
+        """
+        Generates observations of the current trajectory.
+
+        Parameters
+        ----------
+        n_or_times : int or 1-D array
+            Number of observations to be generated or time instances at which the observations shall be generated.
+            * int: emit specified number of observations at uniformly random time instances in [0, T]
+            * 1-D array, values in [0, T]: emit emissions at specified time instances
+
+        Side Effects
+        ------------
+        self.obs_times <-- 1-D array, shape: (M,)
+            Stores the M observation times of the CTBN state.
+
+        self.obs_vals <-- 2-D array, shape: (M, N)
+            Represents the M noisy observations of the CTBN state.
+        """
+        # store observation times (if not provided, draw random time instances first)
+        if isinstance(n_or_times, int):
+            self.obs_times = np.sort(np.random.uniform(0, self.T, n_or_times))
+        else:
+            self.obs_times = np.sort(n_or_times)
+
+        # get the CTBN state at the observation times
+        states = self.get_state(self.obs_times)
+
+        # store emitted observations
+        self.obs_vals = self.obs_model['rvs'](states)
+
     def plot_trajectory(self, nodes=None, kind='image'):
         """
-        Plots a generated trajectory.
+        Plots a generated trajectory and the emitted observations.
+        Note: Observations are only shown for kind='line'.
 
         Parameters
         ----------
@@ -300,6 +350,7 @@ class CTBN:
             fig, axs = plt.subplots(self.n_nodes)
             for n, ax in enumerate(axs):
                 ax.step(self._switching_times, self._states[:, n], where='post')
+                ax.plot(self.obs_times, self.obs_vals[:, n], 'rx')
         else:
             raise ValueError('unknown kind')
 
@@ -378,7 +429,16 @@ class Glauber_CTBN(CTBN):
 if __name__ == '__main__':
 
     # network size
-    N = 100
+    N = 4
+
+    # observation model
+    obs_std = 0.1
+    obs_means = [0, 1]
+    n_obs = 10
+    obs_model = dict(
+        likelihood=lambda Y, X: sta.norm.pdf(X, scale=obs_std, loc=Y),
+        rvs=lambda X: sta.norm.rvs(scale=obs_std, loc=X)
+    )
 
     # CTBN parameters
     ctbn_params = dict(
@@ -387,9 +447,11 @@ if __name__ == '__main__':
         tau=1,
         T=10,
         init_state=None,
+        obs_model=obs_model,
     )
 
     # generate and simulate Glauber network
     ctbn = Glauber_CTBN(**ctbn_params)
     ctbn.simulate()
-    ctbn.plot_trajectory(), plt.show()
+    ctbn.emit(n_obs)
+    ctbn.plot_trajectory(kind='line'), plt.show()
