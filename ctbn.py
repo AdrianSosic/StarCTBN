@@ -67,7 +67,7 @@ class CTBN:
             raise ValueError('invalid adjacency matrix')
 
         # store adjacency matrix and generate graph
-        self._adjacency = x
+        self._adjacency = np.array(x, dtype=bool)
         self._G = nx.DiGraph(x)
 
     @property
