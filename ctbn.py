@@ -319,7 +319,9 @@ class CTBN:
         if isinstance(n_or_times, int):
             self.obs_times = np.sort(np.random.uniform(0, self.T, n_or_times))
         else:
-            self.obs_times = np.sort(n_or_times)
+            times = np.sort(n_or_times)
+            assert times[0] > 0 and times[-1] < self.T
+            self.obs_times = times
 
         # get the CTBN state at the observation times
         states = self.get_state(self.obs_times)
