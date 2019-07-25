@@ -347,8 +347,8 @@ class CTBN:
             plt.ylabel('node')
             plt.xlabel('time')
         elif kind == 'line':
-            fig, axs = plt.subplots(self.n_nodes)
-            for n, ax in enumerate(axs):
+            fig, axs = plt.subplots(len(nodes))
+            for n, ax in zip(nodes, axs):
                 ax.step(self._switching_times, self._states[:, n], where='post')
                 ax.plot(self.obs_times, self.obs_vals[:, n], 'rx')
         else:
