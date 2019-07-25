@@ -370,7 +370,7 @@ class Glauber_CTBN(CTBN):
         """
         self.beta = beta
         self.tau = tau
-        crm_fun = lambda i, pa: self.glauber_crm(np.sum(pa), beta, tau)
+        crm_fun = lambda i, pa: self.glauber_crm(self._states2energy(pa), beta, tau)
         CTBN.__init__(self, n_states=2, crm_fun=crm_fun, **kwargs)
 
     def cache_crms(self):
@@ -378,13 +378,13 @@ class Glauber_CTBN(CTBN):
         Overwrites method in CTBN:
         Caches the conditional rate matrices by storing only one matrix per energy level.
         """
-        # number of distinct CRMs = number of energy levels = maximum number of parents in the network + 1
-        n_crms = self.adjacency.sum(axis=1) + 1
+        # number of distinct CRMs = number of energy levels = 2 * maximum number of parents in the network + 1
+        n_crms = 2 * self.adjacency.sum(axis=1).max() + 1
 
         # initialize empty array and store the different CRMs
         self._crms = np.zeros([n_crms, 2, 2])
-        for s in range(n_crms):
-            self._crms[s] = self.glauber_crm(s, self.beta, self.tau)
+        for i in range(n_crms):
+            self._crms[i] = self.glauber_crm(self._cache_index2energy(i), self.beta, self.tau)
 
         # indicate that CRMs have been cached
         self._crms_cached = True
@@ -395,19 +395,30 @@ class Glauber_CTBN(CTBN):
         Queries the conditional rate matrices of a node based on the energy level of its parents.
         """
         if self._crms_cached:
-            return self._crms[np.sum(parent_state)]
+            cache_index = self._energy2cache_index(self._states2energy(parent_state))
+            return self._crms[cache_index]
         else:
             return self.crm_fun(node, parent_state)
 
     @staticmethod
-    def glauber_crm(n_up_spins, beta, tau):
+    def _states2energy(states):
+        return 2 * np.sum(states) - np.size(states)
+
+    def _energy2cache_index(self, energy):
+        return energy + self.n_nodes - 1
+
+    def _cache_index2energy(self, cache_index):
+        return cache_index - self.n_nodes + 1
+
+    @staticmethod
+    def glauber_crm(sum_of_spins, beta, tau):
         """
         Computes the conditional rate matrix of a node based on the parent spins according to the Glauber dynamics.
 
         Parameters
         ----------
-        n_up_spins : int
-            Number of parents with upward spin.
+        sum_of_spins : int
+            Sum of parent spins (down spin = -1, up spin = 1)
 
         beta : float
             (see constructor)
@@ -420,7 +431,7 @@ class Glauber_CTBN(CTBN):
         out : 2-D array, shape: (S, S)
             Conditional rate matrix.
         """
-        tan = np.tanh(beta * n_up_spins)
+        tan = np.tanh(beta * sum_of_spins)
         rate_up = 0.5 * (1 + tan)
         rate_down = 0.5 * (1 - tan)
         return tau * np.array([[-rate_down, rate_down], [rate_up, -rate_up]])
