@@ -3,6 +3,7 @@ import scipy.stats as sta
 import networkx as nx
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+from scipy.integrate import solve_ivp
 
 
 class CTBN:
@@ -70,6 +71,10 @@ class CTBN:
         # observations
         self.obs_times = None
         self.obs_vals = None
+
+        # initialize marginal distributions (uniform distribution) and Lagrange multipliers (all ones)
+        self.Q = [lambda t: np.squeeze(np.full([np.size(t), self.n_states], fill_value=1/self.n_states))] * self.n_nodes
+        self._rho = [lambda t: np.squeeze(np.ones([np.size(t), self.n_states]))] * self.n_nodes
 
     @property
     def adjacency(self):
@@ -322,10 +327,135 @@ class CTBN:
         # store emitted observations
         self.obs_vals = self.obs_model['rvs'](states)
 
+    def weighted_rates(self, node, weights):
+        """
+        Computes a weighted average of all conditional rate matrices of a node.
+
+        Parameters
+        ----------
+        node : int
+            Node whose CRMs shall be averaged.
+
+        weights : P-D array (P = number of parents), shape: (S, S, ..., S)
+            An array containing the weights for all possible parent configurations of the node. The (i,j,..)th element
+            of the array contains the weight for the CRM assigned to the configuration where the first parent is in
+            state i, the second parent is in state j, and so on.
+
+        Returns
+        -------
+        out : 2-D array, shape: (S, S)
+            Average rate matrix.
+        """
+        # zero array with shape of the CRMs
+        rates = np.zeros([self.n_states] * 2)
+
+        # iterate over all parent configurations and add the corresponding weighted CRMs
+        for parent_conf, weight in np.ndenumerate(weights):
+            crm = self.crm(node, parent_conf)
+            rates += weight * crm
+        return rates
+
+    def expected_rates(self, node, t):
+        """
+        Computes the "expected rate matrix" of a node at time t, given as the average of its CRMs weighted according to
+        the current estimate of its parents' marginal state distributions at time t.
+
+        Parameters
+        ----------
+        node : int
+            Node for which the rates shall be computed.
+
+        t : float, value in [0, T]
+            Time instant at which the rates shall be computed.
+
+        Returns
+        -------
+        out : 2-D array, shape: (S, S)
+            Expected rate matrix.
+        """
+        # if the node has no parents, the expected CRM is just its (unconditional) rate matrix
+        if self.parents(node) is None:
+            return self.crm(node, ())
+
+        # get the current estimate of the marginal state distributions of all parents at time t
+        parents_marginals = [self.Q[p](t) for p in self.parents(node)]
+
+        # the collection of weights is given by the Cartesian product of all marginals
+        product_marginals = np.prod(np.ix_(*parents_marginals))
+
+        # average the CRMs according to their weights (= product of parent marginals)
+        return self.weighted_rates(node, product_marginals)
+
+    def update_Q(self):
+        """
+        Updates the marginal state distributions of all nodes using the current estimate of the Lagrange multipliers
+        self._rho by solving Equation (6) forward in time.
+
+        Side Effects
+        ------------
+        self.Q <-- List of length N, containing callables that represent the marginal state distributions of the nodes.
+            Each callable accepts a single parameter t and returns a 1-D array of shape (S,) that provides the state
+            probabilities of the corresponding node at time t.
+        """
+        # TODO: add option to update all Q_n jointly / use updated marginals while iterating over nodes
+
+        def d_Q_n_t(n, Q_n_t, t):
+            """
+            Implements the right hand side (RHS) of Equation (6)
+
+            Parameters
+            ----------
+            n : int
+                Node ID.
+
+            Q_n_t : 1-D array, shape: (S,)
+                Marginal state distribution of the considered node at time t.
+
+            t : float, values in [0, T]
+                Time instant at which the RHS of the equation shall be evaluated.
+
+            Returns
+            -------
+            out : 1-D array, shape: (S,)
+                Array containing the time derivative of the node's marginal distribution (= probability flow).
+            """
+            # get expected rates and Lagrange multipliers of the node
+            rates = self.expected_rates(n, t)
+            rho_n_t = self._rho[n](t)
+
+            # first term of RHS
+            tmp = (Q_n_t / rho_n_t)[:, None] * rates
+            np.fill_diagonal(tmp, 0)
+            inflow = rho_n_t * np.sum(tmp, axis=0)
+
+            # second term of RHS
+            tmp = rates * rho_n_t[None, :]
+            np.fill_diagonal(tmp, 0)
+            outflow = Q_n_t / rho_n_t * np.sum(tmp, axis=1)
+
+            # add both terms
+            return inflow - outflow
+
+        # create empty list and use uniform distribution as initial distribution for all nodes
+        Q = []
+        Q_0 = np.full(self.n_states, fill_value=1/self.n_states)
+
+        # iterate over all nodes and solve the ODE forward in time
+        for n in range(self.n_nodes):
+            Q_n = solve_ivp(lambda t, y: d_Q_n_t(n, y, t), [0, self.T], Q_0, dense_output=True).sol
+            Q.append(lambda t: Q_n(t).T)  # TODO (optional): rearrange dimensions of Q
+
+        # store the result
+        self.Q = Q
+
     def plot_trajectory(self, nodes=None, kind='image'):
         """
-        Plots a generated trajectory and the emitted observations.
-        Note: Observations are only shown for kind='line'.
+        Plots a generated trajectory, the emitted observations, and the inferred posterior marginal state distributions.
+
+        Notes
+        -----
+        * Observations and marginal distributions are only shown for kind='line'.
+        * Marginal distributions are only shown for S=2.
 
         Parameters
         ----------
@@ -348,9 +478,12 @@ class CTBN:
             plt.xlabel('time')
         elif kind == 'line':
             fig, axs = plt.subplots(len(nodes))
+            t = np.linspace(0, self.T, 100)
             for n, ax in zip(nodes, axs):
                 ax.step(self._switching_times, self._states[:, n], where='post')
                 ax.plot(self.obs_times, self.obs_vals[:, n], 'rx')
+                if self.n_states == 2:
+                    ax.plot(t, self.Q[n](t)[:, 1], 'g:')
         else:
             raise ValueError('unknown kind')
 
