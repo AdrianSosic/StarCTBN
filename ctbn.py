@@ -4,6 +4,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
+from utils import PiecewiseFunction
 
 
 class CTBN:
@@ -127,6 +128,31 @@ class CTBN:
     def children(self, i):
         """Returns the sorted list of children of the given node."""
         return sorted(list(self._G.successors(i)))
+
+    def _node_id2parent_index(self, id, child):
+        """
+        Returns the parent index of a given node in a second node's parent set (provided that the first node is a
+        parent of the second). That is, if pa = _node_id2parent_index(id, child), then parents(child)[pa] = id.
+
+        Parameters
+        ----------
+        id : int
+            Node that shall be search for in the parent set of child.
+
+        child :
+            Node whose parent set is queried.
+
+        Returns
+        -------
+        out : int or None
+            The parent index of node "id" in the parent set of "child", or "None" if "id" is not a parent of "child".
+        """
+        # get the parent set and conduct a sorted search
+        parents = self.parents(child)
+        candidate_index = np.searchsorted(parents, id)
+
+        # if the candidate index is a match, return it, otherwise return None
+        return candidate_index if candidate_index < len(parents) and parents[candidate_index] == id else None
 
     def get_state(self, times):
         """
@@ -329,7 +355,7 @@ class CTBN:
         # store emitted observations
         self.obs_vals = self.obs_model['rvs'](states)
 
-    def weighted_rates(self, node, weights):
+    def weighted_rates(self, node, weights, keep_index=None):
         """
         Computes a weighted average of all conditional rate matrices of a node.
 
@@ -343,21 +369,36 @@ class CTBN:
             of the array contains the weight for the CRM assigned to the configuration where the first parent is in
             state i, the second parent is in state j, and so on.
 
+        keep_index : optional, int
+            If provided, the specified index is excluded from the summation and kept as an additional (first) index
+            in the returned array.
+
         Returns
         -------
-        out : 2-D array, shape: (S, S)
-            Average rate matrix.
+        out : 2-D array or 3-D array, shape: (S, S) or (S, S, S)
+            Average rate matrix/matrices. If "keep_index" is some integer M, the averaging results obtained for
+            different states of M-th parent are stored separately along the first dimension of the output array.
         """
-        # zero array with shape of the CRMs
-        rates = np.zeros([self.n_states] * 2)
+        # array to store the averaging results
+        rates = np.zeros([self.n_states] * 2) if keep_index is None else np.zeros([self.n_states] * 3)
 
+        # full averaging over all parents:
         # iterate over all parent configurations and add the corresponding weighted CRMs
-        for parent_conf, weight in np.ndenumerate(weights):
-            crm = self.crm(node, parent_conf)
-            rates += weight * crm
+        if keep_index is None:
+            for parent_conf, weight in np.ndenumerate(weights):
+                crm = self.crm(node, parent_conf)
+                rates += weight * crm
+
+        # compute separate averages for each state of the parent that is located at index "keep_index"
+        else:
+            for parent_conf, weight in np.ndenumerate(weights):
+                crm = self.crm(node, parent_conf)
+                rates[parent_conf[keep_index]] += weight * crm
+
+        # return the average rates
         return rates
 
-    def expected_rates(self, node, t):
+    def expected_rates(self, node, t, separate=None):
         """
         Computes the "expected rate matrix" of a node at time t, given as the average of its CRMs weighted according to
         the current estimate of its parents' marginal state distributions at time t.
@@ -370,10 +411,14 @@ class CTBN:
         t : float, value in [0, T]
             Time instant at which the rates shall be computed.
 
+        separate : optional, int
+            Node ID. If provided, the expected rates are computed separately for all states of that node.
+
         Returns
         -------
-        out : 2-D array, shape: (S, S)
-            Expected rate matrix.
+        out : 2-D array or 3-D array, shape: (S, S) or (S, S, S)
+            Expected rate matrix/matrices. If "separate" is provided, the expected rates obtained for different states
+            of the corresponding node are stored separately along the first dimension of the output array.
         """
         # if the node has no parents, the expected CRM is just its (unconditional) rate matrix
         if self.parents(node) is None:
@@ -385,8 +430,17 @@ class CTBN:
         # the collection of weights is given by the Cartesian product of all marginals
         product_marginals = np.prod(np.ix_(*parents_marginals))
 
+        # if the expected rates shall be computed separately for all states of a given parent node, exclude the
+        # corresponding summation during the averaging procedure
+        if separate is not None:
+            index = self._node_id2parent_index(separate, node)
+            if index is None:
+                raise ValueError(f"node {separate} is not a parent of node {node}")
+        else:
+            index = None
+
         # average the CRMs according to their weights (= product of parent marginals)
-        return self.weighted_rates(node, product_marginals)
+        return self.weighted_rates(node, product_marginals, keep_index=index)
 
     def update_Q(self):
         """
@@ -449,6 +503,117 @@ class CTBN:
 
         # store the result
         self.Q = Q
+
+    def update_rho(self):
+        """
+        Updates the Lagrange multipliers of all nodes using the current estimate of the marginal distributions self.Q
+        by solving Equation (5) backward in time.
+
+        Side Effects
+        ------------
+        self._rho <-- List of length N, containing callables that represent the Lagrange multipliers of the nodes.
+            Each callable accepts a single parameter t and returns a 1-D array of shape (S,) that provides the
+            transformed Lagrange multipliers of the corresponding node at time t.
+        """
+
+        def d_rho_n_t(n, rho_n_t, t):
+            """
+            Implements the right hand side (RHS) of Equation (5).
+
+            Parameters
+            ----------
+            n : int
+                Node ID.
+
+            rho_n_t : 1-D array, shape: (S,)
+                Lagrange multipliers of the considered node at time t.
+
+            t : float, values in [0, T]
+                Time instant at which the RHS of the equation shall be evaluated.
+
+            Returns
+            -------
+            out : 1-D array, shape: (S,)
+                Array containing the time derivative of the node's Lagrange multipliers.
+            """
+            rates = self.expected_rates(n, t)
+            psi = np.diag(self.psi(n, t))
+            return -(rates + psi) @ rho_n_t
+
+        # time grid providing the intervals on which the computed piecewise rho functions are defined
+        grid = np.r_[-np.inf, self.obs_times, self.T]
+
+        # list to store the functions
+        rho = []
+
+        # iterate over all nodes
+        for n in range(self.n_nodes):
+            # list to store the function pieces of the function belonging to the current node, filled from right to left
+            pieces = []
+
+            # iterate backwards over all time intervals and observations at the end of the intervals
+            # (for the rightmost interval, i.e. at the end of the simulation horizon, there is no observation)
+            for t1, t2, y_n in zip(grid[-2::-1], grid[-1:0:-1], [None, *self.obs_vals[::-1, n]]):
+                # solve only until t=0
+                # Note: the grid ranges to -inf because the leftmost interval of rho has infinite support
+                t1 = max(t1, 0)
+
+                # set all Lagrange multipliers to 1 at the end of the simulation horizon;
+                # for the remaining intervals, use the reset condition described the in paragraph below Equation (7)
+                if y_n is None:
+                    reset_value = np.ones(self.n_states)
+                else:
+                    reset_value = pieces[0](t2) * self.obs_model['likelihood'](y_n, range(self.n_states))
+                    reset_value = reset_value / reset_value.min()  # renormalize for numerical stability
+
+                # compute function piece and append it to the left side of the list
+                f = solve_ivp(lambda t, y: d_rho_n_t(n, y, t), [t2, max(t1, 0)], reset_value, dense_output=True)
+                assert f.status == 0
+                pieces.insert(0, f.sol)
+
+            # add final rho function of the current node to the list
+            rho.append(PiecewiseFunction(grid, pieces, dims=self.n_states))
+
+        # store the result
+        self._rho = rho
+
+    def psi(self, node, t):
+        """
+        Computes the auxiliary values psi (Page 5) for the dynamics of the Lagrange multipliers rho in Equation (5).
+
+        Parameters
+        ----------
+        node : int
+            Node ID
+
+        t : float, values in [0, T]
+            Time instant at which the auxiliary variables shall be computed.
+
+        Returns
+        -------
+        out : 1-D array, shape: (S,)
+            Psi vector of the given node at time t.
+        """
+        # initialize empty array to store the values for each state of the considered node
+        psi = np.zeros(self.n_states)
+
+        # get the children of the node
+        children = self.children(node)
+
+        # outer sum over all children
+        for child in children:
+            # get the current marginal estimates and Lagrange multipliers of the child node
+            rho_c_t = self._rho[child](t)
+            Q_c_t = self.Q[child](t)
+
+            # compute the expected rates of the child node for all states of the target node
+            rates = self.expected_rates(child, t, separate=node)
+
+            # evaluate all sums on the right hand side of the equation that belong to the current child node
+            psi += np.einsum('j,ijk,k->i', Q_c_t / rho_c_t, rates, rho_c_t)
+
+        # return the auxiliary array
+        return psi
 
     def plot_trajectory(self, nodes=None, kind='image'):
         """
@@ -600,4 +765,9 @@ if __name__ == '__main__':
     ctbn = Glauber_CTBN(**ctbn_params)
     ctbn.simulate()
     ctbn.emit(n_obs)
+    ctbn.plot_trajectory(kind='line'), plt.show()
+
+    # inference
+    ctbn.update_rho()
+    ctbn.update_Q()
     ctbn.plot_trajectory(kind='line'), plt.show()
