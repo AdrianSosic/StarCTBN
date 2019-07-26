@@ -4,7 +4,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
-from utils import PiecewiseFunction
+from utils import PiecewiseFunction, transpose_callable
 
 
 class CTBN:
@@ -457,7 +457,7 @@ class CTBN:
 
         def d_Q_n_t(n, Q_n_t, t):
             """
-            Implements the right hand side (RHS) of Equation (6)
+            Implements the right hand side (RHS) of Equation (6).
 
             Parameters
             ----------
@@ -498,8 +498,9 @@ class CTBN:
 
         # iterate over all nodes and solve the ODE forward in time
         for n in range(self.n_nodes):
-            Q_n = solve_ivp(lambda t, y: d_Q_n_t(n, y, t), [0, self.T], Q_0, dense_output=True).sol
-            Q.append(lambda t: Q_n(t).T)  # TODO (optional): rearrange dimensions of Q
+            Q_n = solve_ivp(lambda t, y: d_Q_n_t(n, y, t), [0, self.T], Q_0, dense_output=True)
+            assert Q_n.status == 0
+            Q.append(transpose_callable(Q_n.sol))  # TODO (optional): rearrange dimensions of Q
 
         # store the result
         self.Q = Q

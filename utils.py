@@ -78,3 +78,10 @@ class PiecewiseFunction:
         self.funs = funs
         self.assign_right = assign_right
         self.dims = dims if dims is not None else np.size(funs[0](grid[0]))
+
+
+def transpose_callable(f):
+    """Returns a callable whose output is the transposed of the input callable."""
+    def transposed(x):
+        return f(x).T
+    return transposed
