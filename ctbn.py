@@ -17,7 +17,7 @@ class CTBN:
     T: simulation horizon
     """
 
-    def __init__(self, adjacency, n_states, T, crm_fun, obs_model=None, init_state=None):
+    def __init__(self, adjacency, n_states, T, obs_model=None, init_state=None):
         """
         Parameters
         ----------
@@ -30,12 +30,14 @@ class CTBN:
         T : float
             Simulation horizon.
 
+        # TODO: move to method
         crm_fun : callable, two parameters
             Provides the conditional rate matrices (CRMs) for the CTBN. When called with parameters (n, pa),
             it returns a 2-D array representing the CRM of node "n" for the parent configuration "pa". "n" is an
             integer in [0, N] and "pa" is a 1-D array containing the parent states ordered from lowest to highest
             parent node number. Each entry in "pa" is an integer in [0, S].
 
+        # TODO: move to method
         obs_model : dict with fields {'rvs', likelihood'}
             'rvs' : callable, one parameter
                 Generates a random observation of a CTBN state. When called with parameter X, where X is a 1-D array
@@ -57,7 +59,6 @@ class CTBN:
         self.adjacency = adjacency
         self.n_states = n_states
         self.T = T
-        self.crm_fun = crm_fun
         self.obs_model = obs_model
         self.init_state = init_state
 
@@ -65,9 +66,9 @@ class CTBN:
         self._states = None
         self._switching_times = None
 
-        # CRM caching
-        self._crms = None
-        self._crms_cached = False
+        # cache for various quantities
+        self._use_stats = False
+        self._cache = {'node_stats': np.array(self._stats_values(1))}  # TODO: only cache node_stats when use_stats=True
 
         # observations
         self.obs_times = None
@@ -121,6 +122,11 @@ class CTBN:
         """Returns the number of nodes of the CTBN."""
         return self._G.number_of_nodes()
 
+    @property
+    def max_degree(self):
+        # TODO: docstring
+        return self.adjacency.sum(axis=1).max()
+
     def parents(self, i):
         """Returns the sorted list of parents of the given node."""
         return sorted(list(self._G.predecessors(i)))
@@ -154,6 +160,41 @@ class CTBN:
         # if the candidate index is a match, return it, otherwise return None
         return candidate_index if candidate_index < len(parents) and parents[candidate_index] == id else None
 
+    @classmethod
+    def _stats_values(cls, n_parents):
+        raise NotImplementedError
+
+    @staticmethod
+    def _set2stats(parent_conf):
+        raise NotImplementedError
+
+    def stats_values(self, n_parents):
+        if 'stats_values' in self._cache:
+            return self._cache['stats_values'][n_parents]
+        else:
+            return self._stats_values(n_parents)
+
+    def _cache_stats_values(self):
+        self._cache['stats_values'] = {p: self._stats_values(p) for p in range(self.max_degree)}
+
+    def stats_ind(self, p, s):
+        if 'stats_ind' in self._cache:
+            return self._cache['stats_ind'][(p, s)]
+        else:
+            raise NotImplementedError
+
+    def _cache_stats_inds(self):
+        self._cache['stats_ind'] = {}
+        for p in range(self.max_degree):
+            for i, s in enumerate(self.stats_values(p)):
+                self._cache['stats_ind'][(p, s)] = i
+
+    def crm(self, node, parent_conf):
+        raise NotImplementedError
+
+    def crm_stats(self, parent_conf):
+        raise NotImplementedError
+
     def get_state(self, times):
         """
         Queries the state of the CTBN at different times along the current trajectory.
@@ -186,7 +227,7 @@ class CTBN:
         out : 3-D array, shape: (N, S, S)
             N conditional rate matrices, represented as a three-dimensional array.
         """
-        return np.array([self.crm(i, state[self.parents(i)]) for i in range(self.n_nodes)])
+        return np.array([self.get_crm(i, state[self.parents(i)]) for i in range(self.n_nodes)])
 
     def get_rates(self, state, crms=None):
         """
@@ -209,7 +250,7 @@ class CTBN:
             crms = self.get_crms(state)
         return np.squeeze(np.take_along_axis(crms, state[:, None, None], axis=1))
 
-    def crm(self, node, parent_state):
+    def get_crm(self, node, parent_conf):
         """
         Returns the conditional rate matrix of a node for a given parent configuration either from cache or by
         calling the CRM function.
@@ -219,7 +260,7 @@ class CTBN:
         node : int
             (see crm_fun)
 
-        parent_state : 1-D array
+        parent_conf : 1-D array
             (see crm_fun)
 
         Returns
@@ -227,45 +268,60 @@ class CTBN:
         out : 2-D array, shape: (S, S)
             Conditional rate matrix.
         """
-        if self._crms_cached:
-            parent_state = tuple(parent_state) if len(parent_state) > 0 else slice(None)
-            return self._crms[node][parent_state]
+        if self._use_stats:
+            if 'crms_stats' in self._cache:
+                return self._cache['crms_stats'][self._set2stats(parent_conf)]
+            else:
+                return self.crm_stats(self._set2stats(parent_conf))
         else:
-            return self.crm_fun(node, parent_state)
+            if 'crms' in self._cache:
+                parent_conf = tuple(parent_conf) if len(parent_conf) > 0 else slice(None)
+                return self._cache['crms'][node][parent_conf]
+            else:
+                return self.crm(node, parent_conf)
 
-    def cache_crms(self):
+    def _cache_crms(self):
         """
         Caches the conditional rate matrices of all nodes to avoid repeated calls of the CRM function using a
         generic caching strategy, where all possible CRMs of all nodes are evaluated and stored one after another.
 
         Side Effects
         ------------
-        self._crms <-- list of numpy arrays containing the conditional rate matrices of all nodes
+        if self._use_stats:
+            self._cache['crms'] <-- list of numpy arrays containing the conditional rate matrices of all nodes
+        else
+            self.cache['crms_stats'] <-- dict of numpy arrays containing all possible conditional rate matrices
         """
-        # create empty list to store all CRMs
-        self._crms = []
+        if self._use_stats:
+            self._cache['crms_stats'] = {}
+            for stat in self._stats_values(self.max_degree):
+                self._cache['crms_stats'][stat] = self.crm_stats(stat)
 
-        # iterate over all nodes
-        for n in range(self.n_nodes):
-            # get the parents of the node
-            parents = self.parents(n)
+        else:
+            # create empty list to store all CRMs
+            crms = []
 
-            # if the node has no parents, simply store the node's single (unconditional) rate matrix and continue
-            if not parents:
-                self._crms.append(self.crm_fun(n, []))
-                continue
+            # iterate over all nodes
+            for n in range(self.n_nodes):
+                # get the parents of the node
+                parents = self.parents(n)
 
-            # create empty array of appropriate shape to store all conditional rate matrices of the node
-            shape = (len(parents) + 2) * [self.n_states]
-            self._crms.append(np.zeros(shape))
+                # if the node has no parents, simply store the node's single (unconditional) rate matrix and continue
+                if not parents:
+                    crms.append(self.crm(n, []))
+                    continue
 
-            # iterate over all parent state configurations
-            for parent_state in np.ndindex(*shape[0:-2]):
-                # store the CRM of the current parent configuration using the configuration index
-                self._crms[n][parent_state] = self.crm_fun(n, parent_state)
+                # create empty array of appropriate shape to store all conditional rate matrices of the node
+                shape = (len(parents) + 2) * [self.n_states]
+                crms.append(np.zeros(shape))
 
-        # indicate that CRMs have been cached
-        self._crms_cached = True
+                # iterate over all parent state configurations
+                for parent_conf in np.ndindex(*shape[0:-2]):
+                    # store the CRM of the current parent configuration using the configuration index
+                    crms[n][parent_conf] = self.crm(n, parent_conf)
+
+                # store the CRMS in cache
+                self._cache['crms'] = crms
 
     def simulate(self):
         """
@@ -386,13 +442,13 @@ class CTBN:
         # iterate over all parent configurations and add the corresponding weighted CRMs
         if keep_index is None:
             for parent_conf, weight in np.ndenumerate(weights):
-                crm = self.crm(node, parent_conf)
+                crm = self.get_crm(node, parent_conf)
                 rates += weight * crm
 
         # compute separate averages for each state of the parent that is located at index "keep_index"
         else:
             for parent_conf, weight in np.ndenumerate(weights):
-                crm = self.crm(node, parent_conf)
+                crm = self.get_crm(node, parent_conf)
                 rates[parent_conf[keep_index]] += weight * crm
 
         # return the average rates
@@ -422,13 +478,10 @@ class CTBN:
         """
         # if the node has no parents, the expected CRM is just its (unconditional) rate matrix
         if self.parents(node) is None:
-            return self.crm(node, ())
+            return self.get_crm(node, ())
 
         # get the current estimate of the marginal state distributions of all parents at time t
         parents_marginals = [self.Q[p](t) for p in self.parents(node)]
-
-        # the collection of weights is given by the Cartesian product of all marginals
-        product_marginals = np.prod(np.ix_(*parents_marginals))
 
         # if the expected rates shall be computed separately for all states of a given parent node, exclude the
         # corresponding summation during the averaging procedure
@@ -439,8 +492,56 @@ class CTBN:
         else:
             index = None
 
-        # average the CRMs according to their weights (= product of parent marginals)
-        return self.weighted_rates(node, product_marginals, keep_index=index)
+        if self._use_stats:
+            return self._sum_product(parents_marginals, keep_index=index)
+        else:
+            # the collection of weights is given by the Cartesian product of all marginals
+            product_marginals = np.prod(np.ix_(*parents_marginals))
+
+            # average the CRMs according to their weights (= product of parent marginals)
+            return self.weighted_rates(node, product_marginals, keep_index=index)
+
+    def _sum_product(self, marginals, keep_index=None):
+        # TODO: docstring
+
+        # if node shall be treated separately, move it to the end of the computation chain
+        if keep_index is not None:
+            marginals[0], marginals[keep_index] = marginals[keep_index], marginals[0]
+
+        # iterate along the computation chain in reverse order
+        for p, marginal in zip(range(len(marginals), -1, -1), reversed(marginals)):
+
+            # get all possible joint statistics of the remaining nodes in the computation chain
+            others_stats = self.stats_values(p-1)
+
+            # if the last node is treated separately, stop and return the results for all states of that node separately
+            if keep_index is not None and p == 1:
+                # weigh the rates with the corresponding marginal state probabilities of the node and return the result
+                return result_curr * marginal[:, None, None]
+
+            # compute all possible stats combinations of the current node and the remaining nodes
+            joint_stats = self._combine_stats(others_stats[:, None], self._cache['node_stats'])
+
+            # when processing the first node (end of the chain), evaluate the CRMs for all stats values
+            if p == len(marginals):
+                rates = np.array([[self.crm_stats(x) for x in y] for y in joint_stats])  # TODO: use cached crms
+
+            # otherwise:
+            else:
+                # find the correct indices of the joint statistics in the array computed in the previous iteration
+                inds = [self.stats_ind(p, s) for s in joint_stats.ravel()]
+
+                # extract the processed rates and reshape them like the joint statistics array
+                rates = result_curr[inds].reshape([*joint_stats.shape, self.n_states, self.n_states])
+
+            # factor in the marginal of the current node
+            # (The variable "result_curr" contains the intermediate result that is obtained by factoring in the
+            # marginalsd of all visited nodes in the computation chain. It stores separate results for all possible
+            # statistics of the remaining nodes in the chain.)
+            result_curr = np.einsum('ijkl,j->ikl', rates, marginal)
+
+        # return the final rate matrix
+        return result_curr[0]
 
     def update_Q(self):
         """
@@ -671,45 +772,29 @@ class Glauber_CTBN(CTBN):
         """
         self.beta = beta
         self.tau = tau
-        crm_fun = lambda i, pa: self.glauber_crm(self._states2energy(pa), beta, tau)
-        CTBN.__init__(self, n_states=2, crm_fun=crm_fun, **kwargs)
+        CTBN.__init__(self, n_states=2, **kwargs)
+        self._use_stats = True
+        self._cache_crms()
+        self._cache_stats_values()
+        self._cache_stats_inds()
 
-    def cache_crms(self):
-        """
-        Overwrites method in CTBN:
-        Caches the conditional rate matrices by storing only one matrix per energy level.
-        """
-        # number of distinct CRMs = number of energy levels = 2 * maximum number of parents in the network + 1
-        n_crms = 2 * self.adjacency.sum(axis=1).max() + 1
+    def crm(self, node, parents):
+        return self.glauber_crm(self._set2stats(parents), self.beta, self.tau)
 
-        # initialize empty array and store the different CRMs
-        self._crms = np.zeros([n_crms, 2, 2])
-        for i in range(n_crms):
-            self._crms[i] = self.glauber_crm(self._cache_index2energy(i), self.beta, self.tau)
-
-        # indicate that CRMs have been cached
-        self._crms_cached = True
-
-    def crm(self, node, parent_state):
-        """
-        Overwrites method in CTBN:
-        Queries the conditional rate matrices of a node based on the energy level of its parents.
-        """
-        if self._crms_cached:
-            cache_index = self._energy2cache_index(self._states2energy(parent_state))
-            return self._crms[cache_index]
-        else:
-            return self.crm_fun(node, parent_state)
+    def crm_stats(self, stats):
+        return self.glauber_crm(stats, self.beta, self.tau)
 
     @staticmethod
-    def _states2energy(states):
+    def _set2stats(states):
         return 2 * np.sum(states) - np.size(states)
 
-    def _energy2cache_index(self, energy):
-        return energy + self.n_nodes - 1
+    @classmethod
+    def _stats_values(cls, n_parents):
+        return np.arange(-n_parents, n_parents+1, 2)
 
-    def _cache_index2energy(self, cache_index):
-        return cache_index - self.n_nodes + 1
+    @staticmethod
+    def _combine_stats(stats_set1, stats_set2):
+        return stats_set1 + stats_set2
 
     @staticmethod
     def glauber_crm(sum_of_spins, beta, tau):
