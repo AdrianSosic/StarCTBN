@@ -177,17 +177,8 @@ class CTBN:
     def _cache_stats_values(self):
         self._cache['stats_values'] = {p: self._stats_values(p) for p in range(self.max_degree)}
 
-    def stats_ind(self, p, s):
-        if 'stats_ind' in self._cache:
-            return self._cache['stats_ind'][(p, s)]
-        else:
-            raise NotImplementedError
-
-    def _cache_stats_inds(self):
-        self._cache['stats_ind'] = {}
-        for p in range(self.max_degree):
-            for i, s in enumerate(self.stats_values(p)):
-                self._cache['stats_ind'][(p, s)] = i
+    def _stats2inds(self, n_parents, stats):
+        return np.argwhere(stats[:, None] == self.stats_values(n_parents))[:, 1]
 
     def crm(self, node, parent_conf):
         raise NotImplementedError
@@ -524,19 +515,20 @@ class CTBN:
 
             # when processing the first node (end of the chain), evaluate the CRMs for all stats values
             if p == len(marginals):
-                rates = np.array([[self.crm_stats(x) for x in y] for y in joint_stats])  # TODO: use cached crms
+                # TODO: extend get_crm method to allow passing stats
+                rates = np.array([[self._cache['crms_stats'][x] for x in y] for y in joint_stats])
 
             # otherwise:
             else:
                 # find the correct indices of the joint statistics in the array computed in the previous iteration
-                inds = [self.stats_ind(p, s) for s in joint_stats.ravel()]
+                inds = self._stats2inds(p, joint_stats.ravel())
 
                 # extract the processed rates and reshape them like the joint statistics array
                 rates = result_curr[inds].reshape([*joint_stats.shape, self.n_states, self.n_states])
 
             # factor in the marginal of the current node
             # (The variable "result_curr" contains the intermediate result that is obtained by factoring in the
-            # marginalsd of all visited nodes in the computation chain. It stores separate results for all possible
+            # marginals of all visited nodes in the computation chain. It stores separate results for all possible
             # statistics of the remaining nodes in the chain.)
             result_curr = np.einsum('ijkl,j->ikl', rates, marginal)
 
@@ -776,7 +768,6 @@ class Glauber_CTBN(CTBN):
         self._use_stats = True
         self._cache_crms()
         self._cache_stats_values()
-        self._cache_stats_inds()
 
     def crm(self, node, parents):
         return self.glauber_crm(self._set2stats(parents), self.beta, self.tau)
@@ -791,6 +782,9 @@ class Glauber_CTBN(CTBN):
     @classmethod
     def _stats_values(cls, n_parents):
         return np.arange(-n_parents, n_parents+1, 2)
+
+    def _stats2inds(self, n_parents, stats):
+        return ((stats + n_parents) / 2).astype(int)
 
     @staticmethod
     def _combine_stats(stats_set1, stats_set2):
