@@ -35,11 +35,11 @@ class Glauber_CTBN(CTBN):
         return 2 * np.sum(states) - np.size(states)
 
     @classmethod
-    def _stats_values(cls, n_parents):
-        return np.arange(-n_parents, n_parents+1, 2)
+    def _stats_values(cls, n_nodes):
+        return np.arange(-n_nodes, n_nodes + 1, 2)
 
-    def _stats2inds(self, n_parents, stats):
-        return ((stats + n_parents) / 2).astype(int)
+    def _stats2inds(self, n_nodes, stats):
+        return ((stats + n_nodes) / 2).astype(int)
 
     @staticmethod
     def obs_likelihood(Y, X):

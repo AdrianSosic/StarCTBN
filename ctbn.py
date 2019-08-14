@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.stats as sta
 import networkx as nx
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
@@ -30,50 +29,31 @@ class CTBN:
         T : float
             Simulation horizon.
 
-        # TODO: move to method
-        crm_fun : callable, two parameters
-            Provides the conditional rate matrices (CRMs) for the CTBN. When called with parameters (n, pa),
-            it returns a 2-D array representing the CRM of node "n" for the parent configuration "pa". "n" is an
-            integer in [0, N] and "pa" is a 1-D array containing the parent states ordered from lowest to highest
-            parent node number. Each entry in "pa" is an integer in [0, S].
-
-        # TODO: move to method
-        obs_model : dict with fields {'rvs', likelihood'}
-            'rvs' : callable, one parameter
-                Generates a random observation of a CTBN state. When called with parameter X, where X is a 1-D array
-                of shape (N,) containing integer values in [0, S] representing a CTBN state, it returns a
-                corresponding (N,)-array containing noisy observations of each node's state.
-            'likelihood' : callable, two parameters
-                Computes the likelihood of a given observation. When called with parameters (Y, X), it returns a 2-D
-                array containing the likelihood of the CTBN state observation "Y" for given CTBN states "X". "Y" is a
-                1-D array of shape (N,) containing noisy observations, as generated through the field 'rvs'. "X" is a
-                2-D array of shape (M, N) containing M different CTBN states. The (m,n)th element of the returned array
-                contains the likelihood that the nth CTBN node generated observation Y[n] at state X[m,n].
-
         init_state : optional, {None, 1-D array}
             Initial state of the CTBN.
             * None: all initial node states are drawn uniformly at random
             * 1-D array of integers: specifies the initial states of all nodes
         """
-        # store input attributes
+        # store input
         self.adjacency = adjacency
         self.n_states = n_states
         self.T = T
         self.init_state = init_state
 
-        # attributes to store sampled trajectory
+        # variables to store sampled trajectory
         self._states = None
         self._switching_times = None
+
+        # variables to store observations
+        self.obs_times = None
+        self.obs_vals = None
 
         # cache for various quantities
         self._use_stats = False
         self._cache = {'node_stats': np.array(self._stats_values(1))}  # TODO: only cache node_stats when use_stats=True
 
-        # observations
-        self.obs_times = None
-        self.obs_vals = None
-
         # initialize marginal distributions (uniform distribution) and Lagrange multipliers (all ones)
+        # TODO: write classes to handle these objects
         self.Q = [lambda t: np.squeeze(np.full([np.size(t), self.n_states], fill_value=1/self.n_states))] * self.n_nodes
         self._rho = [lambda t: np.squeeze(np.ones([np.size(t), self.n_states]))] * self.n_nodes
 
@@ -123,26 +103,26 @@ class CTBN:
 
     @property
     def max_degree(self):
-        # TODO: docstring
+        """Returns the maximum number of parents in the CTBN."""
         return self.adjacency.sum(axis=1).max()
 
-    def parents(self, i):
+    def parents(self, node):
         """Returns the sorted list of parents of the given node."""
-        return sorted(list(self._G.predecessors(i)))
+        return sorted(list(self._G.predecessors(node)))
 
-    def children(self, i):
+    def children(self, node):
         """Returns the sorted list of children of the given node."""
-        return sorted(list(self._G.successors(i)))
+        return sorted(list(self._G.successors(node)))
 
-    def _node_id2parent_index(self, id, child):
+    def _node_id2parent_index(self, node, child):
         """
         Returns the parent index of a given node in a second node's parent set (provided that the first node is a
-        parent of the second). That is, if pa = _node_id2parent_index(id, child), then parents(child)[pa] = id.
+        parent of the second). That is, if pa = _node_id2parent_index(node, child), then parents(child)[pa] = node.
 
         Parameters
         ----------
-        id : int
-            Node that shall be search for in the parent set of child.
+        node : int
+            Node that shall be search for in the parent set of "child".
 
         child :
             Node whose parent set is queried.
@@ -150,47 +130,145 @@ class CTBN:
         Returns
         -------
         out : int or None
-            The parent index of node "id" in the parent set of "child", or "None" if "id" is not a parent of "child".
+            The parent index of "node" in the parent set of "child", or "None" if "node" is not a parent of "child".
         """
         # get the parent set and conduct a sorted search
         parents = self.parents(child)
-        candidate_index = np.searchsorted(parents, id)
+        candidate_index = np.searchsorted(parents, node)
 
         # if the candidate index is a match, return it, otherwise return None
-        return candidate_index if candidate_index < len(parents) and parents[candidate_index] == id else None
+        return candidate_index if candidate_index < len(parents) and parents[candidate_index] == node else None
 
     @classmethod
-    def _stats_values(cls, n_parents):
+    def _stats_values(cls, n_nodes):
+        """
+        Computes all possible summary statistics that can be produced by "n_nodes" nodes.
+
+        Parameters
+        ----------
+        n_nodes : int
+            Number of nodes.
+
+        Returns
+        -------
+        out : 1-D array containing the summary statistics.
+        """
         raise NotImplementedError
 
     @staticmethod
-    def _set2stats(parent_conf):
+    def _set2stats(state_conf):
+        """
+        Converts a given state configuration of a set of nodes into the corresponding summary statistic.
+
+        Parameters
+        ----------
+        state_conf : 1-D array, dtype: int, length: arbitrary
+            Contains the states of a given node set.
+
+        Returns
+        -------
+        out : float
+            Summary statistic of the state configuration.
+        """
         raise NotImplementedError
 
-    def stats_values(self, n_parents):
+    def stats_values(self, n_nodes):
+        """Returns all possible summary statistics for "n_nodes" nodes from cache (if available) or by computing them
+        from scratch."""
         if 'stats_values' in self._cache:
-            return self._cache['stats_values'][n_parents]
+            return self._cache['stats_values'][n_nodes]
         else:
-            return self._stats_values(n_parents)
+            return self._stats_values(n_nodes)
+
+    @staticmethod
+    def _combine_stats(stats_set1, stats_set2):
+        """Defines the operation to combine the summary statistics of two node sets."""
+        raise NotImplementedError
 
     def _cache_stats_values(self):
+        """Stores all possible summary statistics for all possible parent set sizes in the cache."""
         self._cache['stats_values'] = {p: self._stats_values(p) for p in range(self.max_degree)}
 
-    def _stats2inds(self, n_parents, stats):
-        return np.argwhere(stats[:, None] == self.stats_values(n_parents))[:, 1]
+    def _stats2inds(self, n_nodes, stats):
+        """Generic method to find the indices of a given set of summary statistics in the list of statistics
+        associated with a given set size (typically the size of a parent set). The indices are determined by
+        a simple comparison. For improved performance, the method should be overridden in the subclasses to exploit
+        the specific structure of the class-specific list of statistics."""
+        return np.argwhere(stats[:, None] == self.stats_values(n_nodes))[:, 1]
 
     def crm(self, node, parent_conf):
+        """
+        Computes the conditional rate matrix of a given node for a certain parent configuration.
+
+        Parameters
+        ----------
+        node : int
+            Node for which the CRM shall be computed.
+
+        parent_conf : 1-D array, dtype: int
+            State configuration of the node's parents. The states are ordered from lowest to highest parent node number.
+
+        Returns
+        -------
+        out : 2-D array, shape: (S, S)
+            Conditional rate matrix.
+        """
         raise NotImplementedError
 
-    def crm_stats(self, parent_conf):
+    def crm_stats(self, parent_stats):
+        # TODO: add node dependency
+        """
+        Computes the conditional rate matrix for a given parent configuration statistic.
+
+        Parameters
+        ----------
+        parent_stats : float
+            Summary statistic of the parents' state configuration.
+
+        Returns
+        -------
+        out : 2-D array, shape: (S, S)
+            Conditional rate matrix.
+        """
         raise NotImplementedError
 
     @staticmethod
     def obs_likelihood(Y, X):
+        """
+        Computes the likelihood of a given CTBN state observation.
+
+        Parameters
+        ----------
+        Y : 1-D array, shape: (N,)
+            Noisy observation of a CTBN state (see obs_rvs).
+
+        X : 2-D array, dtype: int, shape: (M, N)
+            Contains M different CTBN states for which the likelihoods of the observation Y shall be computed.
+
+        Returns
+        -------
+        out : 2-D array, shape: (M, N)
+            Likelihoods of the observation. The (m,n)th element of the array contains the likelihood that the nth
+            CTBN node generated observation Y[n] at state X[m,n].
+
+        """
         raise NotImplementedError
 
     @staticmethod
     def obs_rvs(X):
+        """
+        Generates a random observation of a CTBN state.
+
+        Parameters
+        ----------
+        X : 1-D array, dtype: int, shape: (N,)
+            State of the CTBN.
+
+        Returns
+        -------
+        out : 1-D array, shape: (N,)
+            Noisy observation of the CTBN state. The nth element of the array is a noisy observation of the nth node.
+        """
         raise NotImplementedError
 
     def get_state(self, times):
@@ -211,7 +289,7 @@ class CTBN:
         y = np.vstack([self._states, self._states[-1]])
         return interp1d(t, y, axis=0, kind='previous')(times).astype(int)
 
-    def get_crms(self, state):
+    def get_all_crms(self, state):
         """
         Returns all conditional rate matrices for the given state of the CTBN.
 
@@ -236,7 +314,7 @@ class CTBN:
         state : 1-D array, dtype: int, shape: (N,)
             State of the CTBN for which the rates shall be computed.
 
-        crms : (optional) 3-D array, shape: (N, S, S)
+        crms : optional, 3-D array, shape: (N, S, S)
             Conditional rate matrices for the queried CTBN state.
 
         Returns
@@ -245,7 +323,7 @@ class CTBN:
             N rate vectors, represented as a two-dimensional array.
         """
         if crms is None:
-            crms = self.get_crms(state)
+            crms = self.get_all_crms(state)
         return np.squeeze(np.take_along_axis(crms, state[:, None, None], axis=1))
 
     def get_crm(self, node, parent_conf):
@@ -256,10 +334,10 @@ class CTBN:
         Parameters
         ----------
         node : int
-            (see crm_fun)
+            Node for which the CRM shall be returned.
 
-        parent_conf : 1-D array
-            (see crm_fun)
+        parent_conf : 1-D array, dtype: int
+            State configuration of the node's parents. The states are ordered from lowest to highest parent node number.
 
         Returns
         -------
@@ -280,17 +358,23 @@ class CTBN:
 
     def _cache_crms(self):
         """
-        Caches the conditional rate matrices of all nodes to avoid repeated calls of the CRM function using a
+        Caches the conditional rate matrices of all nodes to avoid repeated calls of the CRM function. The method uses
         generic caching strategy, where all possible CRMs of all nodes are evaluated and stored one after another.
 
         Side Effects
         ------------
         if self._use_stats:
-            self._cache['crms'] <-- list of numpy arrays containing the conditional rate matrices of all nodes
-        else
-            self.cache['crms_stats'] <-- dict of numpy arrays containing all possible conditional rate matrices
+            self._cache['crms'] <-- List of numpy arrays containing the conditional rate matrices of all nodes. The
+            nth numpy array in the list has P+2 dimensions, each of size S, where P is the number of parents of the nth
+            node. Each of the first P dimensions corresponds to one parent of the node. These dimensions are ordered
+            from lowest to highest parent node number. The last two dimensions store the corresponding CRMs.
+
+        else:
+            self.cache['crms_stats'] <-- Dict of numpy arrays containing all possible conditional rate matrices. The
+            keys are the summary statistics of the parent configuration.
         """
         if self._use_stats:
+            # compute the CRMs for all possible summary statistics and store them in a dictionary
             self._cache['crms_stats'] = {}
             for stat in self._stats_values(self.max_degree):
                 self._cache['crms_stats'][stat] = self.crm_stats(stat)
@@ -393,7 +477,7 @@ class CTBN:
             Stores the M observation times of the CTBN state.
 
         self.obs_vals <-- 2-D array, shape: (M, N)
-            Represents the M noisy observations of the CTBN state.
+            Represents the M noisy observations of the CTBN state at the observation times.
         """
         # store observation times (if not provided, draw random time instances first)
         if isinstance(n_or_times, int):
@@ -430,8 +514,8 @@ class CTBN:
         Returns
         -------
         out : 2-D array or 3-D array, shape: (S, S) or (S, S, S)
-            Average rate matrix/matrices. If "keep_index" is some integer M, the averaging results obtained for
-            different states of M-th parent are stored separately along the first dimension of the output array.
+            Average rate matrix/matrices. If "keep_index" is some integer M, the averaging results obtained for the
+            different states of the M-th parent are stored separately along the first dimension of the output array.
         """
         # array to store the averaging results
         rates = np.zeros([self.n_states] * 2) if keep_index is None else np.zeros([self.n_states] * 3)
@@ -490,19 +574,39 @@ class CTBN:
         else:
             index = None
 
+        # when statistics are available, compute the rates efficiently using a sum-product procedure
         if self._use_stats:
             return self._sum_product(parents_marginals, keep_index=index)
         else:
-            # the collection of weights is given by the Cartesian product of all marginals
+            # the full collection of weights is obtained through the Cartesian product of all marginals
             product_marginals = np.prod(np.ix_(*parents_marginals))
 
             # average the CRMs according to their weights (= product of parent marginals)
             return self.weighted_rates(node, product_marginals, keep_index=index)
 
     def _sum_product(self, marginals, keep_index=None):
-        # TODO: docstring
+        """
+        Efficiently computes the expected rate matrix of a node for the given marginal distributions of its parents
+        based on summary statistics using a sum-product procedure.
 
-        # if node shall be treated separately, move it to the end of the computation chain
+        Parameters
+        ----------
+        marginals : list containing 1-D arrays of shape (S,)
+            Collection of marginal distributions of the parents' states. The ordering is arbitrary since the
+            computation is based on summary statistics, assuming all parents are exchangeable.
+
+        keep_index : optional, int
+            If provided, the marginal distribution at the specified index is treated separately. The output array then
+            contains an additional (first) index that allows to access the averaging results for all states of the
+            associated parent.
+
+        Returns
+        -------
+        out : 2-D array or 3-D array, shape: (S, S) or (S, S, S)
+            Average rate matrix/matrices. If "keep_index" is some integer M, the averaging results obtained for the
+            different states of the M-th parent are stored separately along the first dimension of the output array.
+        """
+        # if a node shall be treated separately, move it to the end of the computation chain
         if keep_index is not None:
             marginals[0], marginals[keep_index] = marginals[keep_index], marginals[0]
 
@@ -685,7 +789,7 @@ class CTBN:
         Parameters
         ----------
         node : int
-            Node ID
+            Node ID.
 
         t : float, values in [0, T]
             Time instant at which the auxiliary variables shall be computed.
