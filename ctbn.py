@@ -17,7 +17,7 @@ class CTBN:
     T: simulation horizon
     """
 
-    def __init__(self, adjacency, n_states, T, obs_model=None, init_state=None):
+    def __init__(self, adjacency, n_states, T, init_state=None):
         """
         Parameters
         ----------
@@ -59,7 +59,6 @@ class CTBN:
         self.adjacency = adjacency
         self.n_states = n_states
         self.T = T
-        self.obs_model = obs_model
         self.init_state = init_state
 
         # attributes to store sampled trajectory
@@ -184,6 +183,14 @@ class CTBN:
         raise NotImplementedError
 
     def crm_stats(self, parent_conf):
+        raise NotImplementedError
+
+    @staticmethod
+    def obs_likelihood(Y, X):
+        raise NotImplementedError
+
+    @staticmethod
+    def obs_rvs(X):
         raise NotImplementedError
 
     def get_state(self, times):
@@ -400,7 +407,7 @@ class CTBN:
         states = self.get_state(self.obs_times)
 
         # store emitted observations
-        self.obs_vals = self.obs_model['rvs'](states)
+        self.obs_vals = self.obs_rvs(states)
 
     def weighted_rates(self, node, weights, keep_index=None):
         """
@@ -657,7 +664,7 @@ class CTBN:
                 if y_n is None:
                     reset_value = np.ones(self.n_states)
                 else:
-                    reset_value = pieces[0](t2) * self.obs_model['likelihood'](y_n, range(self.n_states))
+                    reset_value = pieces[0](t2) * self.obs_likelihood(y_n, range(self.n_states))
                     reset_value = reset_value / reset_value.min()  # renormalize for numerical stability
 
                 # compute function piece and append it to the left side of the list
@@ -787,6 +794,14 @@ class Glauber_CTBN(CTBN):
         return ((stats + n_parents) / 2).astype(int)
 
     @staticmethod
+    def obs_likelihood(Y, X):
+        return sta.norm.pdf(X, scale=obs_std, loc=Y)
+
+    @staticmethod
+    def obs_rvs(X):
+        return sta.norm.rvs(scale=obs_std, loc=X)
+
+    @staticmethod
     def _combine_stats(stats_set1, stats_set2):
         return stats_set1 + stats_set2
 
@@ -826,10 +841,6 @@ if __name__ == '__main__':
     obs_std = 0.1
     obs_means = [0, 1]
     n_obs = 10
-    obs_model = dict(
-        likelihood=lambda Y, X: sta.norm.pdf(X, scale=obs_std, loc=Y),
-        rvs=lambda X: sta.norm.rvs(scale=obs_std, loc=X)
-    )
 
     # CTBN parameters
     ctbn_params = dict(
@@ -838,7 +849,6 @@ if __name__ == '__main__':
         tau=1,
         T=10,
         init_state=None,
-        obs_model=obs_model,
     )
 
     # generate and simulate Glauber network
