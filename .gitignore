@@ -1,9 +1,10 @@
 # Python
 venv
-*.lprof
+**/*.lprof
+**/*.pyc
 
 # Pycharm
 .idea
 
 # Vim
-*.swp
+**/*.swp
