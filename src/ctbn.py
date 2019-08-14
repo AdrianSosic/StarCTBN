@@ -46,7 +46,7 @@ class CTBN(ABC):
         Parameters
         ----------
         adjacency : 2-D array, values in {0, 1}, shape: (N, N)
-            Adjacency matrix of the CTBN.
+            Adjacency matrix of the CTBN. The nth row of the matrix defines the parent set of the nth node.
 
         n_states : int
             Number of states (S) each node can take.
@@ -100,7 +100,7 @@ class CTBN(ABC):
 
         # store adjacency matrix and generate graph
         self._adjacency = np.array(x, dtype=bool)
-        self._G = nx.DiGraph(x)
+        self._G = nx.DiGraph(x.T)
 
     @property
     def init_state(self):
@@ -207,7 +207,7 @@ class CTBN(ABC):
 
     def _cache_stats_values(self):
         """Stores all possible summary statistics for all possible parent set sizes in the cache."""
-        self._cache['stats_values'] = {p: self.stats_values(p) for p in range(self.max_degree)}
+        self._cache['stats_values'] = {p: self.stats_values(p) for p in range(self.max_degree+1)}
 
     @classmethod
     def combine_stats(cls, stats_set1, stats_set2):
@@ -402,7 +402,8 @@ class CTBN(ABC):
         if self._use_stats:
             # compute the CRMs for all possible summary statistics and store them in a dictionary
             self._cache['crms_stats'] = {}
-            for stat in self.stats_values(self.max_degree):
+            all_stats_values = set(np.concatenate([self.stats_values(p) for p in range(self.max_degree+1)]))
+            for stat in all_stats_values:
                 self._cache['crms_stats'][stat] = self.crm_stats(stat)
 
         else:
