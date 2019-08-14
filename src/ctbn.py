@@ -1,19 +1,44 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
+from abc import ABC, abstractmethod
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
-from utils import PiecewiseFunction, transpose_callable
+from src.utils import PiecewiseFunction, transpose_callable
 
 
-class CTBN:
+class CTBN(ABC):
     """
-    Base class for continuous-time Bayesian networks (CTBNs).
+    Abstract base class for continuous-time Bayesian networks (CTBNs).
 
     Notation:
     N: number of nodes
     S: number of states (equal for all nodes)
     T: simulation horizon
+
+    The minimum requirement to instantiate and simulate a network is to implement the "crm" function, which defines the
+    network's conditional rate matrices.
+
+    For additional features, the following methods can be optionally implemented:
+
+    Generating observations
+    -----------------------
+    * obs_rvs
+
+    Computing marginal posterior state distributions
+    ------------------------------------------------
+    * obs_likelihood
+
+    Efficient inference using summary statistics
+    --------------------------------------------
+    * crm_stats
+    * set2stats
+    * stats_values
+    * combine_stats
+
+    Efficient indexing of summary statistics
+    ----------------------------------------
+    * stats2inds
     """
 
     def __init__(self, adjacency, n_states, T, init_state=None):
@@ -50,7 +75,7 @@ class CTBN:
 
         # cache for various quantities
         self._use_stats = False
-        self._cache = {'node_stats': np.array(self._stats_values(1))}  # TODO: only cache node_stats when use_stats=True
+        self._cache = {'node_stats': np.array(self.stats_values(1))}  # TODO: only cache node_stats when use_stats=True
 
         # initialize marginal distributions (uniform distribution) and Lagrange multipliers (all ones)
         # TODO: write classes to handle these objects
@@ -140,7 +165,7 @@ class CTBN:
         return candidate_index if candidate_index < len(parents) and parents[candidate_index] == node else None
 
     @classmethod
-    def _stats_values(cls, n_nodes):
+    def stats_values(cls, n_nodes):
         """
         Computes all possible summary statistics that can be produced by "n_nodes" nodes.
 
@@ -155,8 +180,8 @@ class CTBN:
         """
         raise NotImplementedError
 
-    @staticmethod
-    def _set2stats(state_conf):
+    @classmethod
+    def set2stats(cls, state_conf):
         """
         Converts a given state configuration of a set of nodes into the corresponding summary statistic.
 
@@ -172,30 +197,31 @@ class CTBN:
         """
         raise NotImplementedError
 
-    def stats_values(self, n_nodes):
+    def get_stats_values(self, n_nodes):
         """Returns all possible summary statistics for "n_nodes" nodes from cache (if available) or by computing them
         from scratch."""
         if 'stats_values' in self._cache:
             return self._cache['stats_values'][n_nodes]
         else:
-            return self._stats_values(n_nodes)
-
-    @staticmethod
-    def _combine_stats(stats_set1, stats_set2):
-        """Defines the operation to combine the summary statistics of two node sets."""
-        raise NotImplementedError
+            return self.stats_values(n_nodes)
 
     def _cache_stats_values(self):
         """Stores all possible summary statistics for all possible parent set sizes in the cache."""
-        self._cache['stats_values'] = {p: self._stats_values(p) for p in range(self.max_degree)}
+        self._cache['stats_values'] = {p: self.stats_values(p) for p in range(self.max_degree)}
 
-    def _stats2inds(self, n_nodes, stats):
+    @classmethod
+    def combine_stats(cls, stats_set1, stats_set2):
+        """Defines the operation to combine the summary statistics of two node sets."""
+        raise NotImplementedError
+
+    def stats2inds(self, n_nodes, stats):
         """Generic method to find the indices of a given set of summary statistics in the list of statistics
         associated with a given set size (typically the size of a parent set). The indices are determined by
         a simple comparison. For improved performance, the method should be overridden in the subclasses to exploit
         the specific structure of the class-specific list of statistics."""
-        return np.argwhere(stats[:, None] == self.stats_values(n_nodes))[:, 1]
+        return np.argwhere(stats[:, None] == self.get_stats_values(n_nodes))[:, 1]
 
+    @abstractmethod
     def crm(self, node, parent_conf):
         """
         Computes the conditional rate matrix of a given node for a certain parent configuration.
@@ -213,7 +239,7 @@ class CTBN:
         out : 2-D array, shape: (S, S)
             Conditional rate matrix.
         """
-        raise NotImplementedError
+        pass
 
     def crm_stats(self, parent_stats):
         # TODO: add node dependency
@@ -232,8 +258,8 @@ class CTBN:
         """
         raise NotImplementedError
 
-    @staticmethod
-    def obs_likelihood(Y, X):
+    @classmethod
+    def obs_likelihood(cls, Y, X):
         """
         Computes the likelihood of a given CTBN state observation.
 
@@ -254,8 +280,8 @@ class CTBN:
         """
         raise NotImplementedError
 
-    @staticmethod
-    def obs_rvs(X):
+    @classmethod
+    def obs_rvs(cls, X):
         """
         Generates a random observation of a CTBN state.
 
@@ -346,9 +372,9 @@ class CTBN:
         """
         if self._use_stats:
             if 'crms_stats' in self._cache:
-                return self._cache['crms_stats'][self._set2stats(parent_conf)]
+                return self._cache['crms_stats'][self.set2stats(parent_conf)]
             else:
-                return self.crm_stats(self._set2stats(parent_conf))
+                return self.crm_stats(self.set2stats(parent_conf))
         else:
             if 'crms' in self._cache:
                 parent_conf = tuple(parent_conf) if len(parent_conf) > 0 else slice(None)
@@ -376,7 +402,7 @@ class CTBN:
         if self._use_stats:
             # compute the CRMs for all possible summary statistics and store them in a dictionary
             self._cache['crms_stats'] = {}
-            for stat in self._stats_values(self.max_degree):
+            for stat in self.stats_values(self.max_degree):
                 self._cache['crms_stats'][stat] = self.crm_stats(stat)
 
         else:
@@ -614,7 +640,7 @@ class CTBN:
         for p, marginal in zip(range(len(marginals), -1, -1), reversed(marginals)):
 
             # get all possible joint statistics of the remaining nodes in the computation chain
-            others_stats = self.stats_values(p-1)
+            others_stats = self.get_stats_values(p - 1)
 
             # if the last node is treated separately, stop and return the results for all states of that node separately
             if keep_index is not None and p == 1:
@@ -622,7 +648,7 @@ class CTBN:
                 return result_curr * marginal[:, None, None]
 
             # compute all possible stats combinations of the current node and the remaining nodes
-            joint_stats = self._combine_stats(others_stats[:, None], self._cache['node_stats'])
+            joint_stats = self.combine_stats(others_stats[:, None], self._cache['node_stats'])
 
             # when processing the first node (end of the chain), evaluate the CRMs for all stats values
             if p == len(marginals):
@@ -632,7 +658,7 @@ class CTBN:
             # otherwise:
             else:
                 # find the correct indices of the joint statistics in the array computed in the previous iteration
-                inds = self._stats2inds(p, joint_stats.ravel())
+                inds = self.stats2inds(p, joint_stats.ravel())
 
                 # extract the processed rates and reshape them like the joint statistics array
                 rates = result_curr[inds].reshape([*joint_stats.shape, self.n_states, self.n_states])
