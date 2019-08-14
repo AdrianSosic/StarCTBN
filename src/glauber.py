@@ -7,7 +7,7 @@ from src.ctbn import CTBN
 class Glauber_CTBN(CTBN):
     """CTBN with Glauber dynamics."""
 
-    def __init__(self, beta, tau, **kwargs):
+    def __init__(self, beta, tau, obs_std, **kwargs):
         """
         Parameters
         ----------
@@ -19,45 +19,52 @@ class Glauber_CTBN(CTBN):
         """
         self.beta = beta
         self.tau = tau
+        self.obs_std = obs_std
         CTBN.__init__(self, n_states=2, **kwargs)
         self._use_stats = True
         self._cache_crms()
         self._cache_stats_values()
 
     def crm(self, node, parents):
+        # implements abstract method of CTBN
         return glauber_crm(self.set2stats(parents), self.beta, self.tau)
 
     def crm_stats(self, stats):
+        # implements method of CTBN
         return glauber_crm(stats, self.beta, self.tau)
 
     @classmethod
     def set2stats(cls, states):
+        # implements method of CTBN
         return 2 * np.sum(states) - np.size(states)
 
     @classmethod
     def stats_values(cls, n_nodes):
+        # implements method of CTBN
         return np.arange(-n_nodes, n_nodes + 1, 2)
 
     @classmethod
     def stats2inds(cls, n_nodes, stats):
+        # implements method of CTBN
         return ((stats + n_nodes) / 2).astype(int)
 
-    @classmethod
-    def obs_likelihood(cls, Y, X):
-        return sta.norm.pdf(X, scale=obs_std, loc=Y)
+    def obs_likelihood(self, Y, X):
+        # implements method of CTBN
+        return sta.norm.pdf(X, scale=self.obs_std, loc=Y)
 
-    @classmethod
-    def obs_rvs(cls, X):
-        return sta.norm.rvs(scale=obs_std, loc=X)
+    def obs_rvs(self, X):
+        # implements method of CTBN
+        return sta.norm.rvs(scale=self.obs_std, loc=X)
 
     @classmethod
     def combine_stats(cls, stats_set1, stats_set2):
+        # implements method of CTBN
         return stats_set1 + stats_set2
 
 
 def glauber_crm(sum_of_spins, beta, tau):
     """
-    Computes the conditional rate matrix of a node based on the parent spins according to the Glauber dynamics.
+    Computes the conditional rate matrix of a node based on the parent spins using Glauber dynamics.
 
     Parameters
     ----------
@@ -86,9 +93,7 @@ if __name__ == '__main__':
     # network size
     N = 4
 
-    # observation model
-    obs_std = 0.1
-    obs_means = [0, 1]
+    # number of observations
     n_obs = 10
 
     # CTBN parameters
@@ -97,7 +102,7 @@ if __name__ == '__main__':
         beta=1,
         tau=1,
         T=10,
-        init_state=None,
+        obs_std=0.1,
     )
 
     # generate and simulate Glauber network
