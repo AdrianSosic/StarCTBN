@@ -1,3 +1,7 @@
+![logo](./doc/logo/logo.png)
+
+-----------------------------
+
 # StarCTBN
 A Python library for **approximate inference in continuous-time Bayesian networks (CTBNs)**. The library provides a computational framework for computing marginal posterior state distributions of a network's nodes from noisy time-coarse observation data using a **star approximation**. The underlying theory is described in [this paper](https://papers.nips.cc/paper/8013-cluster-variational-approximations-for-structure-learning-of-continuous-time-bayesian-networks-from-incomplete-data):
 
@@ -15,4 +19,4 @@ year = {2018}
 * Tested with Python 3.6.8
 
 ## Example
-To see an example, run [./src/glauber.py](./src/glauber.py).
+To see an example, run [./src/potts.py](./src/potts.py).

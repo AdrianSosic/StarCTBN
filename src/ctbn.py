@@ -850,7 +850,7 @@ class CTBN(ABC):
         # return the auxiliary array
         return psi
 
-    def plot_trajectory(self, nodes=None, kind='image'):
+    def plot_trajectory(self, nodes=None, kind='image', n_points=100):
         """
         Plots a generated trajectory, the emitted observations, and the inferred posterior marginal state distributions.
 
@@ -866,6 +866,9 @@ class CTBN(ABC):
 
         kind : {'image', 'line'}
             Visualize the trajectory as a state matrix or as a set of line plots.
+
+        n_points : int
+            Number of interpolation points for line plot.
         """
 
         # select subset of nodes
@@ -873,21 +876,27 @@ class CTBN(ABC):
             nodes = range(self.n_nodes)
         states = self._states[:, nodes]
 
-        # create plot
+        # create image plot
         if kind == 'image':
             plt.imshow(states.T, extent=[0, self.T, -0.5, self.n_nodes-0.5], aspect='auto')
             plt.ylabel('node')
             plt.xlabel('time')
+
+        # create line plot
         elif kind == 'line':
             fig, axs = plt.subplots(len(nodes))
-            t = np.linspace(0, self.T, 100)
+            t = np.linspace(0, self.T, n_points)
+            times = np.r_[self._switching_times, self.T]
+            states = np.vstack([self._states, self._states[-1, :]])
             for n, ax in zip(nodes, axs):
+                Q = self.Q[n](t)
                 if self.n_states == 2:
-                    ax.plot(t, self.Q[n](t)[:, 1], 'g:')
+                    ax.plot(t, Q[:, 1], 'g:')
                 else:
                     for s in range(self.n_states):
-                        ax.fill_between(t, s+0.5*self.Q[n](t)[:, s], s-0.5*self.Q[n](t)[:, s], alpha=0.5)
-                ax.step(self._switching_times, self._states[:, n], where='post', color='k')
+                        ax.fill_between(t, s-0.5*Q[:, s], s+0.5*Q[:, s], alpha=0.5)
+                ax.step(times, states[:, n], where='post', color='k')
                 ax.plot(self.obs_times, self.obs_vals[:, n], 'kx')
+                ax.set_xlim(0, self.T)
         else:
             raise ValueError('unknown kind')

@@ -98,7 +98,7 @@ if __name__ == '__main__':
         obs_std=0.75,
     )
 
-    # generate and simulate Glauber network
+    # generate and simulate Potts network
     ctbn = Potts_CTBN(**ctbn_params)
     ctbn.simulate()
     ctbn.emit(n_obs)
