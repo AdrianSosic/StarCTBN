@@ -131,3 +131,22 @@ def n_fixed_sum_tuples(length, sum_value):
         Number of tuples.
     """
     return int(binom(length + sum_value - 1, length - 1))
+
+
+def _to_tuple(x):
+    """
+    Converts an object into a tuple. If the object is not iterable, creates a one-element tuple containing the object.
+
+    Parameters
+    ----------
+    x : object
+
+    Returns
+    -------
+    out : tuple
+        Tuple representing the object.
+    """
+    try:
+        return tuple(x)
+    except TypeError:
+        return x,

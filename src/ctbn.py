@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
-from src.utils import PiecewiseFunction, transpose_callable
+from src.utils import PiecewiseFunction, transpose_callable, _to_tuple
 
 
 class CTBN(ABC):
@@ -373,7 +373,7 @@ class CTBN(ABC):
         """
         if self._use_stats:
             if 'crms_stats' in self._cache:
-                return self._cache['crms_stats'][tuple(self.set2stats(parent_conf))]
+                return self._cache['crms_stats'][_to_tuple(self.set2stats(parent_conf))]
             else:
                 return self.crm_stats(self.set2stats(parent_conf))
         else:
@@ -405,7 +405,7 @@ class CTBN(ABC):
             self._cache['crms_stats'] = {}
             all_stats_values = [s for p in range(self.max_degree+1) for s in self.stats_values(p)]
             for stat in all_stats_values:
-                key = tuple(stat)
+                key = _to_tuple(stat)
                 if key not in self._cache['crms_stats']:
                     self._cache['crms_stats'][key] = self.crm_stats(stat)
 
@@ -657,7 +657,7 @@ class CTBN(ABC):
             # when processing the first node (end of the chain), evaluate the CRMs for all stats values
             if p == len(marginals):
                 # TODO: extend get_crm method to allow passing stats
-                rates = np.array([[self._cache['crms_stats'][tuple(x)] for x in y] for y in joint_stats])
+                rates = np.array([[self._cache['crms_stats'][_to_tuple(x)] for x in y] for y in joint_stats])
 
             # otherwise:
             else:
