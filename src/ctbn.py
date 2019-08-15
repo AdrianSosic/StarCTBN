@@ -176,7 +176,8 @@ class CTBN(ABC):
 
         Returns
         -------
-        out : 1-D array containing the summary statistics.
+        out : iterable
+            Collection of summary statistics.
         """
         raise NotImplementedError
 
@@ -192,7 +193,7 @@ class CTBN(ABC):
 
         Returns
         -------
-        out : float
+        out : 1-D array
             Summary statistic of the state configuration.
         """
         raise NotImplementedError
@@ -219,7 +220,7 @@ class CTBN(ABC):
         associated with a given set size (typically the size of a parent set). The indices are determined by
         a simple comparison. For improved performance, the method should be overridden in the subclasses to exploit
         the specific structure of the class-specific list of statistics."""
-        return np.argwhere(stats[:, None] == self.get_stats_values(n_nodes))[:, 1]
+        return np.argwhere(np.all(stats[:, None] == self.get_stats_values(n_nodes), axis=2))[:, 1]
 
     @abstractmethod
     def crm(self, node, parent_conf):
@@ -372,7 +373,7 @@ class CTBN(ABC):
         """
         if self._use_stats:
             if 'crms_stats' in self._cache:
-                return self._cache['crms_stats'][self.set2stats(parent_conf)]
+                return self._cache['crms_stats'][tuple(self.set2stats(parent_conf))]
             else:
                 return self.crm_stats(self.set2stats(parent_conf))
         else:
@@ -402,9 +403,11 @@ class CTBN(ABC):
         if self._use_stats:
             # compute the CRMs for all possible summary statistics and store them in a dictionary
             self._cache['crms_stats'] = {}
-            all_stats_values = set(np.concatenate([self.stats_values(p) for p in range(self.max_degree+1)]))
+            all_stats_values = [s for p in range(self.max_degree+1) for s in self.stats_values(p)]
             for stat in all_stats_values:
-                self._cache['crms_stats'][stat] = self.crm_stats(stat)
+                key = tuple(stat)
+                if key not in self._cache['crms_stats']:
+                    self._cache['crms_stats'][key] = self.crm_stats(stat)
 
         else:
             # create empty list to store all CRMs
@@ -654,15 +657,15 @@ class CTBN(ABC):
             # when processing the first node (end of the chain), evaluate the CRMs for all stats values
             if p == len(marginals):
                 # TODO: extend get_crm method to allow passing stats
-                rates = np.array([[self._cache['crms_stats'][x] for x in y] for y in joint_stats])
+                rates = np.array([[self._cache['crms_stats'][tuple(x)] for x in y] for y in joint_stats])
 
             # otherwise:
             else:
                 # find the correct indices of the joint statistics in the array computed in the previous iteration
-                inds = self.stats2inds(p, joint_stats.ravel())
+                inds = self.stats2inds(p, joint_stats.reshape(-1, len(self._cache['node_stats'])))
 
                 # extract the processed rates and reshape them like the joint statistics array
-                rates = result_curr[inds].reshape([*joint_stats.shape, self.n_states, self.n_states])
+                rates = result_curr[inds].reshape([*joint_stats.shape[0:2], self.n_states, self.n_states])
 
             # factor in the marginal of the current node
             # (The variable "result_curr" contains the intermediate result that is obtained by factoring in the
@@ -796,7 +799,7 @@ class CTBN(ABC):
                     reset_value = np.ones(self.n_states)
                 else:
                     reset_value = pieces[0](t2) * self.obs_likelihood(y_n, range(self.n_states))
-                    reset_value = reset_value / reset_value.min()  # renormalize for numerical stability
+                    reset_value = reset_value / reset_value.mean()  # renormalize for numerical stability
 
                 # compute function piece and append it to the left side of the list
                 f = solve_ivp(lambda t, y: d_rho_n_t(n, y, t), [t2, max(t1, 0)], reset_value, dense_output=True)
@@ -879,9 +882,12 @@ class CTBN(ABC):
             fig, axs = plt.subplots(len(nodes))
             t = np.linspace(0, self.T, 100)
             for n, ax in zip(nodes, axs):
-                ax.step(self._switching_times, self._states[:, n], where='post')
-                ax.plot(self.obs_times, self.obs_vals[:, n], 'rx')
                 if self.n_states == 2:
                     ax.plot(t, self.Q[n](t)[:, 1], 'g:')
+                else:
+                    for s in range(self.n_states):
+                        ax.fill_between(t, s+0.5*self.Q[n](t)[:, s], s-0.5*self.Q[n](t)[:, s], alpha=0.5)
+                ax.step(self._switching_times, self._states[:, n], where='post', color='k')
+                ax.plot(self.obs_times, self.obs_vals[:, n], 'kx')
         else:
             raise ValueError('unknown kind')

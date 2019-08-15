@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.special import binom
 
 
 class PiecewiseFunction:
@@ -85,3 +86,48 @@ def transpose_callable(f):
     def transposed(x):
         return f(x).T
     return transposed
+
+
+def fixed_sum_tuples(length, sum_value):
+    """
+    Generates all integer tuples of a given length whose entries sum to a certain value.
+
+    Parameters
+    ----------
+    length : int
+        Length of the tuples.
+
+    sum_value : int
+        Sum of the entries of each tuple.
+
+    Yields
+    ------
+    out : tuple
+        The next integer tuple.
+    """
+    if length == 1:
+        yield (sum_value,)
+        return
+    for i in range(sum_value + 1):
+        for t in fixed_sum_tuples(length - 1, sum_value - i):
+            yield (i,) + t
+
+
+def n_fixed_sum_tuples(length, sum_value):
+    """
+    Computes the number of possible integer tuples of a given length whose entries sum to a certain value.
+
+    Parameters
+    ----------
+    length : int
+        Length of the tuples.
+
+    sum_value : int
+        Sum of the entries of each tuple.
+
+    Yields
+    ------
+    out : int
+        Number of tuples.
+    """
+    return int(binom(length + sum_value - 1, length - 1))

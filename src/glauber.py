@@ -1,13 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy.stats as sta
-from src.ctbn import CTBN
+from src.potts import Potts_CTBN
 
 
-class Glauber_CTBN(CTBN):
+class Glauber_CTBN(Potts_CTBN):
     """CTBN with Glauber dynamics."""
 
-    def __init__(self, beta, tau, obs_std, **kwargs):
+    def __init__(self, **kwargs):
         """
         Parameters
         ----------
@@ -17,10 +16,7 @@ class Glauber_CTBN(CTBN):
         tau: float
             Glauber rate scale.
         """
-        self.beta = beta
-        self.tau = tau
-        self.obs_std = obs_std
-        CTBN.__init__(self, n_states=2, **kwargs)
+        Potts_CTBN.__init__(self, n_states=2, **kwargs)
         self._use_stats = True
         self._cache_crms()
         self._cache_stats_values()
@@ -48,19 +44,6 @@ class Glauber_CTBN(CTBN):
         # implements method of CTBN
         return ((stats + n_nodes) / 2).astype(int)
 
-    def obs_likelihood(self, Y, X):
-        # implements method of CTBN
-        return sta.norm.pdf(X, scale=self.obs_std, loc=Y)
-
-    def obs_rvs(self, X):
-        # implements method of CTBN
-        return sta.norm.rvs(scale=self.obs_std, loc=X)
-
-    @classmethod
-    def combine_stats(cls, stats_set1, stats_set2):
-        # implements method of CTBN
-        return stats_set1 + stats_set2
-
 
 def glauber_crm(sum_of_spins, beta, tau):
     """
@@ -69,13 +52,13 @@ def glauber_crm(sum_of_spins, beta, tau):
     Parameters
     ----------
     sum_of_spins : int
-        Sum of parent spins (down spin = -1, up spin = 1)
+        Sum of parent spins (down spin = -1, up spin = 1).
 
     beta : float
-        (see constructor)
+        Inverse Glauber temperature
 
     tau : float
-        (see constructor)
+        Glauber rate scale.
 
     Returns
     -------
