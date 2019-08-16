@@ -15,12 +15,8 @@ class Potts_CTBN(CTBN):
         self.obs_std = obs_std
         CTBN.__init__(self, n_states=n_states, cache_crms=True, use_stats=True, cache_stats=True, **kwargs)
 
-    def crm(self, node, parents):
-        # implements abstract method of CTBN
-        return potts_crm(self.set2stats(parents), self.beta, self.tau)
-
     def crm_stats(self, stats):
-        # implements abstract method of CTBN
+        # implements method of CTBN
         return potts_crm(stats, self.beta, self.tau)
 
     def obs_likelihood(self, Y, X):

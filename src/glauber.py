@@ -18,10 +18,6 @@ class Glauber_CTBN(Potts_CTBN):
         """
         Potts_CTBN.__init__(self, n_states=2, **kwargs)
 
-    def crm(self, node, parents):
-        # implements abstract method of CTBN
-        return glauber_crm(int(self.set2stats(parents)), self.beta, self.tau)
-
     def crm_stats(self, stats):
         # implements method of CTBN
         return glauber_crm(int(stats), self.beta, self.tau)

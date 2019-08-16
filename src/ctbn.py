@@ -1,7 +1,6 @@
 import numpy as np
 import networkx as nx
 import matplotlib.pyplot as plt
-from abc import ABC, abstractmethod
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
 from operator import itemgetter
@@ -10,17 +9,18 @@ from tqdm import trange
 from utils import PiecewiseFunction, transpose_callable, _to_tuple
 
 
-class CTBN(ABC):
+class CTBN:
     """
-    Abstract base class for continuous-time Bayesian networks (CTBNs).
+    Base class for continuous-time Bayesian networks (CTBNs).
 
     Notation:
     N: number of nodes
     S: number of states (equal for all nodes)
     T: simulation horizon
 
-    The minimum requirement to instantiate and simulate a network is to implement the "crm" function, which defines the
-    network's conditional rate matrices.
+    The minimum requirement to instantiate and simulate a network is to implement either the 'crm' function (in this
+    case, set 'use_stats=False') or the 'crm_stats' function (set 'use_stats=True'), in order to define the network's
+    conditional rate matrices.
 
     For additional features, the following methods can be optionally implemented:
 
@@ -34,7 +34,6 @@ class CTBN(ABC):
 
     Efficient inference using summary statistics
     --------------------------------------------
-    * crm_stats
     * set2stats
     * stats_values
     * combine_stats
@@ -243,7 +242,6 @@ class CTBN(ABC):
         """Defines the operation to combine the summary statistics of two node sets."""
         raise NotImplementedError
 
-    @abstractmethod
     def crm(self, node, parent_conf):
         """
         Computes the conditional rate matrix of a given node for a certain parent configuration.
@@ -261,7 +259,7 @@ class CTBN(ABC):
         out : 2-D array, shape: (S, S)
             Conditional rate matrix.
         """
-        pass
+        raise NotImplementedError
 
     def crm_stats(self, parent_stats):
         # TODO: add node dependency
