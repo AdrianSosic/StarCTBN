@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
+from operator import itemgetter
+from itertools import repeat
 from tqdm import trange
 from utils import PiecewiseFunction, transpose_callable, _to_tuple
 
@@ -166,8 +168,7 @@ class CTBN(ABC):
         # if the candidate index is a match, return it, otherwise return None
         return candidate_index if candidate_index < len(parents) and parents[candidate_index] == node else None
 
-    @classmethod
-    def stats_values(cls, n_nodes):
+    def stats_values(self, n_nodes):
         """
         Computes all possible summary statistics that can be produced by "n_nodes" nodes.
 
@@ -183,8 +184,7 @@ class CTBN(ABC):
         """
         raise NotImplementedError
 
-    @classmethod
-    def set2stats(cls, state_conf):
+    def set2stats(self, state_conf):
         """
         Converts a given state configuration of a set of nodes into the corresponding summary statistic.
 
@@ -212,17 +212,10 @@ class CTBN(ABC):
         """Stores all possible summary statistics for all possible parent set sizes in the cache."""
         self._cache['stats_values'] = {p: self.stats_values(p) for p in range(self.max_degree+1)}
 
-    @classmethod
-    def combine_stats(cls, stats_set1, stats_set2):
+    @staticmethod
+    def combine_stats(stats_set1, stats_set2):
         """Defines the operation to combine the summary statistics of two node sets."""
         raise NotImplementedError
-
-    def stats2inds(self, n_nodes, stats):
-        """Generic method to find the indices of a given set of summary statistics in the list of statistics
-        associated with a given set size (typically the size of a parent set). The indices are determined by
-        a simple comparison. For improved performance, the method should be overridden in the subclasses to exploit
-        the specific structure of the class-specific list of statistics."""
-        return np.argwhere(np.all(stats[:, None] == self.get_stats_values(n_nodes), axis=2))[:, 1]
 
     @abstractmethod
     def crm(self, node, parent_conf):
@@ -261,8 +254,7 @@ class CTBN(ABC):
         """
         raise NotImplementedError
 
-    @classmethod
-    def obs_likelihood(cls, Y, X):
+    def obs_likelihood(self, Y, X):
         """
         Computes the likelihood of a given CTBN state observation.
 
@@ -283,8 +275,7 @@ class CTBN(ABC):
         """
         raise NotImplementedError
 
-    @classmethod
-    def obs_rvs(cls, X):
+    def obs_rvs(self, X):
         """
         Generates a random observation of a CTBN state.
 
@@ -404,12 +395,16 @@ class CTBN(ABC):
         """
         if self._use_stats:
             # compute the CRMs for all possible summary statistics and store them in a dictionary
+            # also, store their indices in the lists of statistic values in a second dictionary
             self._cache['crms_stats'] = {}
-            all_stats_values = [s for p in range(self.max_degree+1) for s in self.stats_values(p)]
-            for stat in all_stats_values:
-                key = _to_tuple(stat)
-                if key not in self._cache['crms_stats']:
-                    self._cache['crms_stats'][key] = self.crm_stats(stat)
+            self._cache['stat2ind'] = {}
+            for p in range(self.max_degree+1):
+                for ind, stat in enumerate(self.stats_values(p)):
+                    key = _to_tuple(stat)
+                    if not hasattr(self, 'stat2ind'):
+                        self._cache['stat2ind'][(p, key)] = ind
+                    if key not in self._cache['crms_stats']:
+                        self._cache['crms_stats'][key] = self.crm_stats(stat)
 
         else:
             # create empty list to store all CRMs
@@ -664,7 +659,11 @@ class CTBN(ABC):
             # otherwise:
             else:
                 # find the correct indices of the joint statistics in the array computed in the previous iteration
-                inds = self.stats2inds(p, joint_stats.reshape(-1, len(self._cache['node_stats'])))
+                if hasattr(self, 'stats2inds'):
+                    inds = self.stats2inds(p, joint_stats.reshape(-1, len(self._cache['node_stats'])))
+                else:
+                    keys = zip(repeat(p), map(tuple, joint_stats.reshape(-1, np.shape(self._cache['node_stats'])[1])))
+                    inds = list(itemgetter(*keys)(self._cache['stat2ind']))
 
                 # extract the processed rates and reshape them like the joint statistics array
                 rates = result_curr[inds].reshape([*joint_stats.shape[0:2], self.n_states, self.n_states])

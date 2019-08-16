@@ -42,8 +42,8 @@ class Potts_CTBN(CTBN):
         # implements method of CTBN
         return np.array(list(fixed_sum_tuples(self.n_states, n_nodes)))
 
-    @classmethod
-    def combine_stats(cls, stats_set1, stats_set2):
+    @staticmethod
+    def combine_stats(stats_set1, stats_set2):
         # implements method of CTBN
         return stats_set1 + stats_set2
 

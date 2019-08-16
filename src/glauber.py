@@ -23,24 +23,24 @@ class Glauber_CTBN(Potts_CTBN):
 
     def crm(self, node, parents):
         # implements abstract method of CTBN
-        return glauber_crm(self.set2stats(parents), self.beta, self.tau)
+        return glauber_crm(int(self.set2stats(parents)), self.beta, self.tau)
 
     def crm_stats(self, stats):
         # implements method of CTBN
-        return glauber_crm(stats, self.beta, self.tau)
+        return glauber_crm(int(stats), self.beta, self.tau)
 
-    @classmethod
-    def set2stats(cls, states):
+    @staticmethod
+    def set2stats(states):
         # implements method of CTBN
         return 2 * np.sum(states) - np.size(states)
 
-    @classmethod
-    def stats_values(cls, n_nodes):
+    @staticmethod
+    def stats_values(n_nodes):
         # implements method of CTBN
-        return np.arange(-n_nodes, n_nodes + 1, 2)
+        return np.arange(-n_nodes, n_nodes + 1, 2)[:, None]
 
-    @classmethod
-    def stats2inds(cls, n_nodes, stats):
+    @staticmethod
+    def stats2inds(n_nodes, stats):
         # implements method of CTBN
         return ((stats + n_nodes) / 2).astype(int)
 
