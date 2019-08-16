@@ -434,8 +434,8 @@ class CTBN(ABC):
                     # store the CRM of the current parent configuration using the configuration index
                     crms[n][parent_conf] = self.crm(n, parent_conf)
 
-                # store the CRMS in cache
-                self._cache['crms'] = crms
+            # store the CRMS in cache
+            self._cache['crms'] = crms
 
     def simulate(self):
         """
