@@ -17,9 +17,6 @@ class Glauber_CTBN(Potts_CTBN):
             Glauber rate scale.
         """
         Potts_CTBN.__init__(self, n_states=2, **kwargs)
-        self._use_stats = True
-        self._cache_crms()
-        self._cache_stats_values()
 
     def crm(self, node, parents):
         # implements abstract method of CTBN

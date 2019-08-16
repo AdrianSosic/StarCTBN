@@ -13,10 +13,7 @@ class Potts_CTBN(CTBN):
         self.beta = beta
         self.tau = tau
         self.obs_std = obs_std
-        CTBN.__init__(self, n_states=n_states, **kwargs)
-        self._use_stats = True
-        self._cache_crms()
-        self._cache_stats_values()
+        CTBN.__init__(self, n_states=n_states, cache_crms=True, use_stats=True, cache_stats=True, **kwargs)
 
     def crm(self, node, parents):
         # implements abstract method of CTBN

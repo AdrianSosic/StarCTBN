@@ -44,7 +44,8 @@ class CTBN(ABC):
     * stats2inds
     """
 
-    def __init__(self, adjacency, n_states, T, init_state=None, verbose=True):
+    def __init__(self, adjacency, n_states, T, init_state=None, cache_crms=False, use_stats=False,
+                 cache_stats=False, verbose=True):
         """
         Parameters
         ----------
@@ -61,12 +62,25 @@ class CTBN(ABC):
             Initial state of the CTBN.
             * None: all initial node states are drawn uniformly at random
             * 1-D array of integers: specifies the initial states of all nodes
+
+        cache_crms : boolean
+            Determines if the conditional rate matrices shall be pre-cached when instantiating the network.
+
+        use_stats : boolean
+            Determines if configuration statistics shall be used instead of the configurations themselves.
+
+        cache_stats : boolean
+            Determines if the configuration statistics shall be pre-cached when instantiating the network.
+
+        verbose : int
+            Verbosity level.
         """
         # store input
         self.adjacency = adjacency
         self.n_states = n_states
         self.T = T
         self.init_state = init_state
+        self.use_stats = use_stats
         self.verbose = verbose
 
         # variables to store sampled trajectory
@@ -78,8 +92,14 @@ class CTBN(ABC):
         self.obs_vals = None
 
         # cache for various quantities
-        self._use_stats = False
-        self._cache = {'node_stats': np.array(self.stats_values(1))}  # TODO: only cache node_stats when use_stats=True
+        self._cache = {}
+        if cache_crms:
+            self._cache_crms()
+        if cache_stats:
+            if not use_stats:
+                raise ValueError("caching of statistics not possible since 'use_stats=False'")
+            else:
+                self._cache_stats_values()
 
         # initialize marginal distributions (uniform distribution) and Lagrange multipliers (all ones)
         # TODO: write classes to handle these objects
@@ -210,7 +230,13 @@ class CTBN(ABC):
 
     def _cache_stats_values(self):
         """Stores all possible summary statistics for all possible parent set sizes in the cache."""
-        self._cache['stats_values'] = {p: self.stats_values(p) for p in range(self.max_degree+1)}
+        # progress bar
+        if self.verbose:
+            print("Caching statistics:")
+        pbar = trange(self.max_degree + 1, disable=not self.verbose)
+
+        # cache statistics
+        self._cache['stats_values'] = {p: self.stats_values(p) for p in pbar}
 
     @staticmethod
     def combine_stats(stats_set1, stats_set2):
@@ -364,7 +390,7 @@ class CTBN(ABC):
         out : 2-D array, shape: (S, S)
             Conditional rate matrix.
         """
-        if self._use_stats:
+        if self.use_stats:
             if 'crms_stats' in self._cache:
                 return self._cache['crms_stats'][_to_tuple(self.set2stats(parent_conf))]
             else:
@@ -383,7 +409,7 @@ class CTBN(ABC):
 
         Side Effects
         ------------
-        if self._use_stats:
+        if self.use_stats:
             self._cache['crms'] <-- List of numpy arrays containing the conditional rate matrices of all nodes. The
             nth numpy array in the list has P+2 dimensions, each of size S, where P is the number of parents of the nth
             node. Each of the first P dimensions corresponds to one parent of the node. These dimensions are ordered
@@ -393,12 +419,21 @@ class CTBN(ABC):
             self.cache['crms_stats'] <-- Dict of numpy arrays containing all possible conditional rate matrices. The
             keys are the summary statistics of the parent configuration.
         """
-        if self._use_stats:
+        if self.use_stats:
             # compute the CRMs for all possible summary statistics and store them in a dictionary
             # also, store their indices in the lists of statistic values in a second dictionary
             self._cache['crms_stats'] = {}
             self._cache['stat2ind'] = {}
-            for p in range(self.max_degree+1):
+
+            # progress bar
+            if self.verbose:
+                print("Caching CRMs:")
+            pbar = trange(self.max_degree+1, disable=not self.verbose)
+
+            for p in pbar:
+                # show progress:
+                pbar.set_description(f"CRMs for {p} parents")
+
                 for ind, stat in enumerate(self.stats_values(p)):
                     key = _to_tuple(stat)
                     if not hasattr(self, 'stat2ind'):
@@ -410,8 +445,16 @@ class CTBN(ABC):
             # create empty list to store all CRMs
             crms = []
 
+            # progress bar
+            if self.verbose:
+                print("Caching CRMs:")
+            pbar = trange(self.n_nodes, disable=not self.verbose)
+
             # iterate over all nodes
-            for n in range(self.n_nodes):
+            for n in pbar:
+                # show progress
+                pbar.set_description(f"CRMs for node {n}")
+
                 # get the parents of the node
                 parents = self.parents(n)
 
@@ -602,7 +645,7 @@ class CTBN(ABC):
             index = None
 
         # when statistics are available, compute the rates efficiently using a sum-product procedure
-        if self._use_stats:
+        if self.use_stats:
             return self._sum_product(parents_marginals, keep_index=index)
         else:
             # the full collection of weights is obtained through the Cartesian product of all marginals
@@ -649,7 +692,7 @@ class CTBN(ABC):
                 return result_curr * marginal[:, None, None]
 
             # compute all possible stats combinations of the current node and the remaining nodes
-            joint_stats = self.combine_stats(others_stats[:, None], self._cache['node_stats'])
+            joint_stats = self.combine_stats(others_stats[:, None], self.stats_values(1))
 
             # when processing the first node (end of the chain), evaluate the CRMs for all stats values
             if p == len(marginals):
@@ -660,9 +703,9 @@ class CTBN(ABC):
             else:
                 # find the correct indices of the joint statistics in the array computed in the previous iteration
                 if hasattr(self, 'stats2inds'):
-                    inds = self.stats2inds(p, joint_stats.reshape(-1, len(self._cache['node_stats'])))
+                    inds = self.stats2inds(p, joint_stats.reshape(-1, np.shape(self.stats_values(1))[1]))
                 else:
-                    keys = zip(repeat(p), map(tuple, joint_stats.reshape(-1, np.shape(self._cache['node_stats'])[1])))
+                    keys = zip(repeat(p), map(tuple, joint_stats.reshape(-1, np.shape(self.stats_values(1))[1])))
                     inds = list(itemgetter(*keys)(self._cache['stat2ind']))
 
                 # extract the processed rates and reshape them like the joint statistics array
@@ -739,7 +782,7 @@ class CTBN(ABC):
         # iterate over all nodes and solve the ODE forward in time
         for n in pbar:
             # show progress
-            pbar.set_description(f"    Updating node {n}")
+            pbar.set_description(f"Updating node {n}")
 
             Q_n = solve_ivp(lambda t, y: d_Q_n_t(n, y, t), [0, self.T], Q_0, dense_output=True)
             assert Q_n.status == 0
@@ -798,7 +841,7 @@ class CTBN(ABC):
         # iterate over all nodes
         for n in pbar:
             # show progress
-            pbar.set_description(f"    Updating node {n}")
+            pbar.set_description(f"Updating node {n}")
 
             # list to store the function pieces of the function belonging to the current node, filled from right to left
             pieces = []
