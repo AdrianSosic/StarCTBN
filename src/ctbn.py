@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
 from tqdm import trange
-from src.utils import PiecewiseFunction, transpose_callable, _to_tuple
+from utils import PiecewiseFunction, transpose_callable, _to_tuple
 
 
 class CTBN(ABC):

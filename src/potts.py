@@ -2,8 +2,8 @@ import numpy as np
 import scipy.stats as sta
 import matplotlib.pyplot as plt
 from scipy.special import softmax
-from src.ctbn import CTBN
-from src.utils import fixed_sum_tuples
+from ctbn import CTBN
+from utils import fixed_sum_tuples
 
 
 class Potts_CTBN(CTBN):

@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from src.potts import Potts_CTBN
+from potts import Potts_CTBN
 
 
 class Glauber_CTBN(Potts_CTBN):
