@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from scipy.interpolate import interp1d
 from scipy.integrate import solve_ivp
+from tqdm import trange
 from src.utils import PiecewiseFunction, transpose_callable, _to_tuple
 
 
@@ -41,7 +42,7 @@ class CTBN(ABC):
     * stats2inds
     """
 
-    def __init__(self, adjacency, n_states, T, init_state=None):
+    def __init__(self, adjacency, n_states, T, init_state=None, verbose=True):
         """
         Parameters
         ----------
@@ -64,6 +65,7 @@ class CTBN(ABC):
         self.n_states = n_states
         self.T = T
         self.init_state = init_state
+        self.verbose = verbose
 
         # variables to store sampled trajectory
         self._states = None
@@ -730,8 +732,16 @@ class CTBN(ABC):
         Q = []
         Q_0 = np.full(self.n_states, fill_value=1/self.n_states)
 
+        # progress bar
+        if self.verbose:
+            print("Update Q:")
+        pbar = trange(self.n_nodes, disable=not self.verbose)
+
         # iterate over all nodes and solve the ODE forward in time
-        for n in range(self.n_nodes):
+        for n in pbar:
+            # show progress
+            pbar.set_description(f"    Updating node {n}")
+
             Q_n = solve_ivp(lambda t, y: d_Q_n_t(n, y, t), [0, self.T], Q_0, dense_output=True)
             assert Q_n.status == 0
             Q.append(transpose_callable(Q_n.sol))  # TODO (optional): rearrange dimensions of Q
@@ -781,8 +791,16 @@ class CTBN(ABC):
         # list to store the functions
         rho = []
 
+        # progress bar
+        if self.verbose:
+            print("Update rho:")
+        pbar = trange(self.n_nodes, disable=not self.verbose)
+
         # iterate over all nodes
-        for n in range(self.n_nodes):
+        for n in pbar:
+            # show progress
+            pbar.set_description(f"    Updating node {n}")
+
             # list to store the function pieces of the function belonging to the current node, filled from right to left
             pieces = []
 
